@@ -662,15 +662,15 @@ canvas.addEventListener('click', (e) => {
 const rotateOverlay = document.getElementById('rotateOverlay');
 
 function resizeCanvas() {
-    const screenW = window.innerWidth;
-    const screenH = window.innerHeight;
-    isMobile = isTouchDevice && (screenW <= 1024 || screenH <= 600);
+    // Use screen dimensions as fallback (more reliable on iOS)
+    const screenW = document.documentElement.clientWidth || window.innerWidth;
+    const screenH = document.documentElement.clientHeight || window.innerHeight;
+    isMobile = isTouchDevice;
 
-    const isPortrait = screenH > screenW;
-    const isSmallScreen = Math.min(screenW, screenH) <= 600;
+    const isPortrait = screenH > screenW * 1.1; // 10% tolerance
 
-    // Show rotate overlay on phones in portrait
-    if (isMobile && isPortrait && isSmallScreen && rotateOverlay) {
+    // Show rotate overlay on touch devices in portrait
+    if (isMobile && isPortrait && rotateOverlay) {
         rotateOverlay.style.display = 'flex';
         canvas.style.display = 'none';
         return;
@@ -678,48 +678,49 @@ function resizeCanvas() {
     if (rotateOverlay) rotateOverlay.style.display = 'none';
     canvas.style.display = 'block';
 
-    const targetRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
-    let displayW, displayH;
+    const targetRatio = CANVAS_WIDTH / CANVAS_HEIGHT; // 1.778
 
-    if (isMobile) {
-        // Mobile landscape: fill screen, keep ratio
-        if (screenW / screenH > targetRatio) {
-            displayH = screenH;
-            displayW = Math.floor(screenH * targetRatio);
-        } else {
-            displayW = screenW;
-            displayH = Math.floor(screenW / targetRatio);
-        }
-        // No border on mobile
-        canvas.style.border = 'none';
-        canvas.style.borderRadius = '0';
-        canvas.style.boxShadow = 'none';
+    // Always scale to fit while preserving aspect ratio
+    let displayW, displayH;
+    const availW = isMobile ? screenW : screenW - 30;
+    const availH = isMobile ? screenH : screenH - 30;
+
+    if (availW / availH > targetRatio) {
+        // Screen is wider than 16:9 — constrain by height
+        displayH = availH;
+        displayW = Math.floor(availH * targetRatio);
     } else {
-        // Desktop: fit with a small margin, add styling
-        const maxW = screenW - 30;
-        const maxH = screenH - 30;
-        if (maxW / maxH > targetRatio) {
-            displayH = maxH;
-            displayW = Math.floor(maxH * targetRatio);
-        } else {
-            displayW = maxW;
-            displayH = Math.floor(maxW / targetRatio);
-        }
-        canvas.style.border = '3px solid #444';
-        canvas.style.borderRadius = '8px';
-        canvas.style.boxShadow = '0 0 30px rgba(255, 100, 200, 0.2)';
+        // Screen is taller/narrower — constrain by width
+        displayW = availW;
+        displayH = Math.floor(availW / targetRatio);
     }
 
     canvas.style.width = displayW + 'px';
     canvas.style.height = displayH + 'px';
+
+    if (isMobile) {
+        canvas.style.border = 'none';
+        canvas.style.borderRadius = '0';
+        canvas.style.boxShadow = 'none';
+    } else {
+        canvas.style.border = '3px solid #444';
+        canvas.style.borderRadius = '8px';
+        canvas.style.boxShadow = '0 0 30px rgba(255, 100, 200, 0.2)';
+    }
 }
 
 window.addEventListener('resize', resizeCanvas);
-window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
-// Also re-check after a short delay (iOS sometimes reports wrong size initially)
-setTimeout(resizeCanvas, 100);
-setTimeout(resizeCanvas, 500);
+window.addEventListener('orientationchange', () => {
+    resizeCanvas();
+    setTimeout(resizeCanvas, 100);
+    setTimeout(resizeCanvas, 300);
+    setTimeout(resizeCanvas, 600);
+});
 resizeCanvas();
+// iOS needs multiple checks as viewport settles
+setTimeout(resizeCanvas, 50);
+setTimeout(resizeCanvas, 200);
+setTimeout(resizeCanvas, 1000);
 
 // ---- TITLE SCREEN TOUCH/CLICK HANDLING ----
 // Button hit areas (set during draw)
