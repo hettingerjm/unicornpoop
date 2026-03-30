@@ -1,0 +1,12 @@
+{
+    "name": "Unicorn Poop",
+    "short_name": "Unicorn Poop",
+    "description": "A rainbow trail survival game!",
+    "start_url": "./index.html",
+    "display": "fullscreen",
+    "orientation": "landscape",
+    "background_color": "#1a1a2e",
+    "theme_color": "#1a1a2e",
+    "categories": ["games"],
+    "icons": []
+}

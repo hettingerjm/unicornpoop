@@ -81,6 +81,17 @@ body.fullscreen canvas {
     color: #999;
 }
 
+#rotateOverlay .rotate-tip {
+    font-size: 13px;
+    color: #777;
+    margin-top: 10px;
+    line-height: 1.5;
+}
+
+#rotateOverlay .rotate-tip strong {
+    color: #E0B0FF;
+}
+
 @keyframes wiggle {
     0%, 100% { transform: rotate(0deg); }
     25% { transform: rotate(90deg); }

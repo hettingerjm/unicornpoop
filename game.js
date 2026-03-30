@@ -526,14 +526,21 @@ function togglePause() {
 
 function toggleFullscreen() {
     if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-        document.body.classList.add('fullscreen');
-        isFullscreen = true;
+        // Try standard Fullscreen API (works on Android/desktop)
+        const el = document.documentElement;
+        const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+        if (rfs) {
+            rfs.call(el).catch(() => {});
+            document.body.classList.add('fullscreen');
+            isFullscreen = true;
+        }
     } else {
-        document.exitFullscreen().catch(() => {});
+        const efs = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+        if (efs) efs.call(document).catch(() => {});
         document.body.classList.remove('fullscreen');
         isFullscreen = false;
     }
+    setTimeout(resizeCanvas, 200);
 }
 
 document.addEventListener('fullscreenchange', () => {
