@@ -657,50 +657,68 @@ canvas.addEventListener('click', (e) => {
 });
 
 // ---- RESPONSIVE SCALING ----
-// Keeps internal resolution at 1280x720 but scales the canvas element
-// to fit the screen while maintaining 16:9 aspect ratio.
-function resizeCanvas() {
-    isMobile = isTouchDevice && (window.innerWidth <= 900 || window.innerHeight <= 500);
+// Internal resolution stays 1280x720 always.
+// Display size scales to fit screen, maintaining 16:9 aspect ratio.
+const rotateOverlay = document.getElementById('rotateOverlay');
 
+function resizeCanvas() {
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
-    const targetRatio = CANVAS_WIDTH / CANVAS_HEIGHT; // 16:9
+    isMobile = isTouchDevice && (screenW <= 1024 || screenH <= 600);
 
+    const isPortrait = screenH > screenW;
+    const isSmallScreen = Math.min(screenW, screenH) <= 600;
+
+    // Show rotate overlay on phones in portrait
+    if (isMobile && isPortrait && isSmallScreen && rotateOverlay) {
+        rotateOverlay.style.display = 'flex';
+        canvas.style.display = 'none';
+        return;
+    }
+    if (rotateOverlay) rotateOverlay.style.display = 'none';
+    canvas.style.display = 'block';
+
+    const targetRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
     let displayW, displayH;
 
     if (isMobile) {
-        // Fill as much screen as possible, maintain aspect ratio
+        // Mobile landscape: fill screen, keep ratio
         if (screenW / screenH > targetRatio) {
-            // Screen is wider than 16:9 — fit to height
             displayH = screenH;
-            displayW = screenH * targetRatio;
+            displayW = Math.floor(screenH * targetRatio);
         } else {
-            // Screen is narrower — fit to width
             displayW = screenW;
-            displayH = screenW / targetRatio;
+            displayH = Math.floor(screenW / targetRatio);
         }
+        // No border on mobile
+        canvas.style.border = 'none';
+        canvas.style.borderRadius = '0';
+        canvas.style.boxShadow = 'none';
     } else {
-        // Desktop: fit within viewport with small margin
-        const maxW = screenW - 20;
-        const maxH = screenH - 20;
+        // Desktop: fit with a small margin, add styling
+        const maxW = screenW - 30;
+        const maxH = screenH - 30;
         if (maxW / maxH > targetRatio) {
             displayH = maxH;
-            displayW = maxH * targetRatio;
+            displayW = Math.floor(maxH * targetRatio);
         } else {
             displayW = maxW;
-            displayH = maxW / targetRatio;
+            displayH = Math.floor(maxW / targetRatio);
         }
+        canvas.style.border = '3px solid #444';
+        canvas.style.borderRadius = '8px';
+        canvas.style.boxShadow = '0 0 30px rgba(255, 100, 200, 0.2)';
     }
 
-    canvas.style.width = Math.floor(displayW) + 'px';
-    canvas.style.height = Math.floor(displayH) + 'px';
+    canvas.style.width = displayW + 'px';
+    canvas.style.height = displayH + 'px';
 }
 
 window.addEventListener('resize', resizeCanvas);
-window.addEventListener('orientationchange', () => {
-    // Small delay to let the browser settle after rotation
-    setTimeout(resizeCanvas, 150);
-});
+window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
+// Also re-check after a short delay (iOS sometimes reports wrong size initially)
+setTimeout(resizeCanvas, 100);
+setTimeout(resizeCanvas, 500);
 resizeCanvas();
 
 // ---- TITLE SCREEN TOUCH/CLICK HANDLING ----
