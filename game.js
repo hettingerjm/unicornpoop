@@ -656,9 +656,52 @@ canvas.addEventListener('click', (e) => {
     }
 });
 
-window.addEventListener('resize', () => {
+// ---- RESPONSIVE SCALING ----
+// Keeps internal resolution at 1280x720 but scales the canvas element
+// to fit the screen while maintaining 16:9 aspect ratio.
+function resizeCanvas() {
     isMobile = isTouchDevice && (window.innerWidth <= 900 || window.innerHeight <= 500);
+
+    const screenW = window.innerWidth;
+    const screenH = window.innerHeight;
+    const targetRatio = CANVAS_WIDTH / CANVAS_HEIGHT; // 16:9
+
+    let displayW, displayH;
+
+    if (isMobile) {
+        // Fill as much screen as possible, maintain aspect ratio
+        if (screenW / screenH > targetRatio) {
+            // Screen is wider than 16:9 — fit to height
+            displayH = screenH;
+            displayW = screenH * targetRatio;
+        } else {
+            // Screen is narrower — fit to width
+            displayW = screenW;
+            displayH = screenW / targetRatio;
+        }
+    } else {
+        // Desktop: fit within viewport with small margin
+        const maxW = screenW - 20;
+        const maxH = screenH - 20;
+        if (maxW / maxH > targetRatio) {
+            displayH = maxH;
+            displayW = maxH * targetRatio;
+        } else {
+            displayW = maxW;
+            displayH = maxW / targetRatio;
+        }
+    }
+
+    canvas.style.width = Math.floor(displayW) + 'px';
+    canvas.style.height = Math.floor(displayH) + 'px';
+}
+
+window.addEventListener('resize', resizeCanvas);
+window.addEventListener('orientationchange', () => {
+    // Small delay to let the browser settle after rotation
+    setTimeout(resizeCanvas, 150);
 });
+resizeCanvas();
 
 // ---- TITLE SCREEN TOUCH/CLICK HANDLING ----
 // Button hit areas (set during draw)
