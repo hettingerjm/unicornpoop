@@ -6,7 +6,7 @@
 // ---- SETTINGS (tweak these!) ----
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
-const GRID_SIZE = 16;               // pixels per grid cell
+let GRID_SIZE = 16;                  // pixels per grid cell
 const MOVE_INTERVAL = 100;          // ms between moves (lower = faster)
 const NPC_COUNT = 3;                // number of NPC unicorns
 const COUNTDOWN_SECONDS = 3;        // "Ready, Set, Go" duration
@@ -16,6 +16,24 @@ const NPC_MISTAKE_CHANCE = 0.04;    // chance NPC picks a random direction
 const SOUND_ENABLED_DEFAULT = true;
 const BG_COLOR = '#2d1b4e';         // dark purple background
 const GRID_LINE_COLOR = 'rgba(255, 255, 255, 0.03)';
+
+// ---- MOBILE SCALE ----
+const MOBILE_SCALE = 1.22;          // scale multiplier for blocks/sprites on mobile
+
+// ---- FRESH/HARDENED POOP SYSTEM ----
+const FRESH_POOP_DURATION = 900;     // ms before poop hardens and becomes deadly
+
+// ---- SPEED BURST ----
+const BURST_SPEED_MULT = 0.55;      // speed multiplier during burst
+const BURST_DURATION = 500;          // ms
+const BURST_COOLDOWN = 6000;         // ms
+
+// ---- POOP SPLATTER ----
+const SPLATTER_COOLDOWN = 8000;      // ms
+const SPLATTER_RADIUS = 2;           // cells around the target
+
+// ---- TRAIL WIDENER ----
+const WIDENER_DURATION = 4000;
 
 // ---- PNG AVATAR SYSTEM ----
 const UNICORN_AVATARS = [
@@ -256,6 +274,7 @@ const COLLECTIBLE_TYPES = [
     { id: 'star',    label: 'Star',     score: 200,  color: '#FFD700', symbol: '\u2605', multiplierBoost: 0.5 },
     { id: 'gem',     label: 'Gem',      score: 500,  color: '#C77DFF', symbol: '\u25C6', multiplierBoost: 1.0 },
     { id: 'heart',   label: 'Heart',    score: 100,  color: '#FF69B4', symbol: '\u2665', multiplierBoost: 0.25 },
+    { id: 'widener', label: 'Mega Poop', score: 150, color: '#8B4513', symbol: '\uD83D\uDCA9', multiplierBoost: 0.1 },
 ];
 
 // ---- POWER-UP SYSTEM ----
@@ -322,8 +341,8 @@ const SHAKE_INTENSITY = 6;
 const SHAKE_DURATION = 300;              // ms
 
 // ---- CONSTANTS (derived) ----
-const COLS = CANVAS_WIDTH / GRID_SIZE;   // 80
-const ROWS = CANVAS_HEIGHT / GRID_SIZE;  // 45
+let COLS = CANVAS_WIDTH / GRID_SIZE;     // 80
+let ROWS = CANVAS_HEIGHT / GRID_SIZE;    // 45
 
 const TITLE = 'TITLE';
 const COUNTDOWN = 'COUNTDOWN';
@@ -394,6 +413,7 @@ let gameState = TITLE;
 let unicorns = [];
 let player = null;
 let occupiedGrid = [];
+let trailTimeGrid = [];
 let survivalTimer = 0;
 let countdownTimer = 0;
 let countdownPhase = 0;
@@ -481,6 +501,40 @@ let achievementPopup = null; // {achievement, timer}
 let shakeTimer = 0;
 let shakeIntensity = 0;
 
+// ---- BURST STATE ----
+let burstActive = false;
+let burstTimer = 0;
+let burstCooldownTimer = 0;
+
+// ---- SPLATTER STATE ----
+let splatterCooldownTimer = 0;
+
+// ---- TRAIL WIDENER STATE ----
+let trailWidenerActive = false;
+let trailWidenerTimer = 0;
+
+// ---- TUTORIAL STATE ----
+let tutorialCompleted = false;
+let tutorialStep = 0;
+let tutorialStepTimer = 0;
+
+const TUTORIAL_STEPS = [
+    { text: 'Swipe to move!', duration: 3500 },
+    { text: 'Fresh poop glows \u2014 you can cross it briefly!', duration: 4000 },
+    { text: 'It hardens fast \u2014 avoid the solid trail!', duration: 3500 },
+    { text: 'Tap BURST for a speed boost!', duration: 3500 },
+    { text: 'Tap SPLAT to drop poop behind you!', duration: 3500 },
+];
+
+// ---- SWIPE-FIRST CONTROLS ----
+let showDpad = false;
+
+// ---- MOBILE TOUCH BUTTONS ----
+let touchBurstBtn = { x: 0, y: 0, r: 32 };
+let touchSplatBtn = { x: 0, y: 0, r: 32 };
+let lastTapTime = 0;
+let firstSwipeTime = 0;
+
 // ---- COMPANION FOLLOWING STATE ----
 let playerPosHistory = [];    // array of {px, py, dir} in pixel coords
 let companionVisuals = [];    // [{x, y, dir}] smoothed positions for each dog
@@ -518,6 +572,8 @@ function loadSaveData() {
             if (typeof data.rainbowPoints === 'number') rainbowPoints = data.rainbowPoints;
             if (Array.isArray(data.ownedAccessories)) ownedAccessories = data.ownedAccessories;
             if (typeof data.highestWave === 'number') highestWave = data.highestWave;
+            if (typeof data.tutorialCompleted === 'boolean') tutorialCompleted = data.tutorialCompleted;
+            if (typeof data.showDpad === 'boolean') showDpad = data.showDpad;
         }
     } catch (e) {}
     applyPlayerColor();
@@ -545,6 +601,8 @@ function saveSaveData() {
             rainbowPoints: rainbowPoints,
             ownedAccessories: ownedAccessories,
             highestWave: highestWave,
+            tutorialCompleted: tutorialCompleted,
+            showDpad: showDpad,
         }));
     } catch (e) {}
 }
@@ -601,6 +659,13 @@ function getCompanionScoreBonus() {
 // ---- MOBILE / TOUCH STATE ----
 const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 let isMobile = isTouchDevice && (window.innerWidth <= 900 || window.innerHeight <= 500);
+
+// Apply mobile scale
+if (isMobile) {
+    GRID_SIZE = Math.round(16 * MOBILE_SCALE);
+    COLS = Math.floor(CANVAS_WIDTH / GRID_SIZE);
+    ROWS = Math.floor(CANVAS_HEIGHT / GRID_SIZE);
+}
 
 // D-pad layout (in canvas coordinates, set in drawTouchControls)
 const DPAD_RADIUS = 60;
@@ -752,12 +817,14 @@ function playSound(type) {
 // ---- GRID ----
 function initGrid() {
     occupiedGrid = Array.from({ length: COLS }, () => Array(ROWS).fill(null));
+    trailTimeGrid = Array.from({ length: COLS }, () => Array(ROWS).fill(0));
 }
 
 function removeTrailFromGrid(unicorn) {
     for (const seg of unicorn.trail) {
         if (occupiedGrid[seg.x] && occupiedGrid[seg.x][seg.y] === unicorn.id) {
             occupiedGrid[seg.x][seg.y] = null;
+            if (trailTimeGrid[seg.x]) trailTimeGrid[seg.x][seg.y] = 0;
         }
     }
 }
@@ -802,6 +869,15 @@ function spawnUnicorns() {
     freeHitUsed = false;
     dogGhostUsed = false;
     dogShieldUsed = false;
+    burstActive = false;
+    burstTimer = 0;
+    burstCooldownTimer = 0;
+    splatterCooldownTimer = 0;
+    trailWidenerActive = false;
+    trailWidenerTimer = 0;
+    tutorialStep = 0;
+    tutorialStepTimer = 0;
+    firstSwipeTime = 0;
 
     applyPlayerColor();
     applyManeColors();
@@ -875,6 +951,8 @@ document.addEventListener('keydown', (e) => {
             break;
         case PLAYING:
             if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') { togglePause(); return; }
+            if (e.key === ' ' || e.key === 'Shift') { triggerBurst(); e.preventDefault(); return; }
+            if (e.key === 'x' || e.key === 'X' || e.key === 'z' || e.key === 'Z') { triggerSplatter(); return; }
             setPlayerDirection(e.key);
             break;
         case PAUSED:
@@ -956,6 +1034,7 @@ function screenToCanvas(clientX, clientY) {
 }
 
 function handleTouchDirection(canvasX, canvasY) {
+    if (!showDpad) return false;
     const dx = canvasX - dpadCenterX;
     const dy = canvasY - dpadCenterY;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -981,6 +1060,20 @@ function handleTouchButton(canvasX, canvasY) {
     const sdy = canvasY - touchSoundBtn.y;
     if (sdx * sdx + sdy * sdy < touchSoundBtn.r * touchSoundBtn.r * 4) {
         soundEnabled = !soundEnabled;
+        return true;
+    }
+    // Burst button
+    const bdx = canvasX - touchBurstBtn.x;
+    const bdy = canvasY - touchBurstBtn.y;
+    if (bdx * bdx + bdy * bdy < touchBurstBtn.r * touchBurstBtn.r * 4) {
+        triggerBurst();
+        return true;
+    }
+    // Splat button
+    const spdx = canvasX - touchSplatBtn.x;
+    const spdy = canvasY - touchSplatBtn.y;
+    if (spdx * spdx + spdy * spdy < touchSplatBtn.r * touchSplatBtn.r * 4) {
+        triggerSplatter();
         return true;
     }
     return false;
@@ -1049,9 +1142,20 @@ canvas.addEventListener('touchend', (e) => {
         const dx = touch.clientX - swipeStartX;
         const dy = touch.clientY - swipeStartY;
         const elapsed = performance.now() - swipeStartTime;
-        if (elapsed < 300 && (Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(dy) > SWIPE_THRESHOLD)) {
+        const isSwipe = elapsed < 300 && (Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(dy) > SWIPE_THRESHOLD);
+        if (isSwipe) {
             let dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
             if (player && player.alive && dir !== OPPOSITES[player.dir]) player.nextDir = dir;
+            if (!firstSwipeTime) firstSwipeTime = performance.now();
+        } else {
+            // Double-tap detection for splatter
+            const now = performance.now();
+            if (now - lastTapTime < 300) {
+                triggerSplatter();
+                lastTapTime = 0;
+            } else {
+                lastTapTime = now;
+            }
         }
     }
 }, { passive: false });
@@ -1181,12 +1285,6 @@ function handleCustomizeTouch(cx, cy) {
             const hat = HATS.find(h => h.id === btn.hatId);
             if (hat && isHatUnlocked(hat)) { selectedHatId = btn.hatId; saveSaveData(); }
         }
-        else if (btn.action === 'maneStrand') { maneEditStrand = btn.index; }
-        else if (btn.action === 'maneColor') {
-            selectedManeColors[maneEditStrand] = btn.color;
-            applyManeColors(); saveSaveData();
-        }
-        else if (btn.action === 'hairstyle') { selectedHairstyle = btn.styleId; saveSaveData(); }
         else if (btn.action === 'companion') { selectedCompanionId = btn.companionId; saveSaveData(); }
         else if (btn.action === 'avatar') { selectedAvatarId = btn.avatarId; saveSaveData(); }
         else if (btn.action === 'accessory') {
@@ -1240,6 +1338,7 @@ function checkCollectiblePickup() {
             scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + c.type.multiplierBoost);
             runCollectibles++;
             lastCollectTime = performance.now();
+            if (c.type.id === 'widener') { trailWidenerActive = true; trailWidenerTimer = WIDENER_DURATION; }
             playSound('collect');
             // Sparkle particles
             const px = c.x * GRID_SIZE + GRID_SIZE / 2;
@@ -1307,6 +1406,7 @@ function checkPowerupPickup() {
                         const cx = player.x + dx, cy = player.y + dy;
                         if (!isOutOfBounds(cx, cy) && occupiedGrid[cx][cy] !== null && occupiedGrid[cx][cy] !== 'player') {
                             occupiedGrid[cx][cy] = null;
+                            if (trailTimeGrid[cx]) trailTimeGrid[cx][cy] = 0;
                             // Remove from unicorn trail arrays
                             for (const u of unicorns) {
                                 u.trail = u.trail.filter(s => !(s.x === cx && s.y === cy));
@@ -1477,10 +1577,13 @@ function chooseBossDirection() {
     // Charger: lean toward player more aggressively
     const possible = getPossibleDirections(boss.dir);
     let best = []; let bestScore = -Infinity;
+    const bossNow = performance.now();
     for (const dir of possible) {
         const { dx, dy } = dirToDelta(dir);
         const nx = boss.x + dx, ny = boss.y + dy;
-        if (isOutOfBounds(nx, ny) || occupiedGrid[nx][ny] !== null) {
+        const bOccupied = !isOutOfBounds(nx, ny) && occupiedGrid[nx][ny] !== null;
+        const bFresh = bOccupied && trailTimeGrid[nx] && trailTimeGrid[nx][ny] > 0 && (bossNow - trailTimeGrid[nx][ny]) < FRESH_POOP_DURATION;
+        if (isOutOfBounds(nx, ny) || (bOccupied && !bFresh)) {
             if (-1 > bestScore) { bestScore = -1; best = [dir]; }
             else if (-1 === bestScore) best.push(dir);
             continue;
@@ -1577,10 +1680,20 @@ function drawAchievementPopup(delta) {
 function scoreDirection(x, y, dir, depth) {
     const { dx, dy } = dirToDelta(dir);
     let score = 0;
+    const now = performance.now();
     for (let i = 1; i <= depth; i++) {
         const nx = x + dx * i;
         const ny = y + dy * i;
-        if (isOutOfBounds(nx, ny) || occupiedGrid[nx][ny] !== null) break;
+        if (isOutOfBounds(nx, ny)) break;
+        if (occupiedGrid[nx][ny] !== null) {
+            // Fresh poop is passable
+            const cellTime = trailTimeGrid[nx] ? trailTimeGrid[nx][ny] : 0;
+            if (cellTime > 0 && (now - cellTime) < FRESH_POOP_DURATION) {
+                score++;
+                continue;
+            }
+            break;
+        }
         score++;
     }
     return score;
@@ -1595,11 +1708,14 @@ function chooseNPCDirection(npc) {
     let best = [];
     let bestScore = -Infinity;
 
+    const now = performance.now();
     for (const dir of possible) {
         const { dx, dy } = dirToDelta(dir);
         const nx = npc.x + dx;
         const ny = npc.y + dy;
-        if (isOutOfBounds(nx, ny) || occupiedGrid[nx][ny] !== null) {
+        const cellOccupied = !isOutOfBounds(nx, ny) && occupiedGrid[nx][ny] !== null;
+        const cellFresh = cellOccupied && trailTimeGrid[nx] && trailTimeGrid[nx][ny] > 0 && (now - trailTimeGrid[nx][ny]) < FRESH_POOP_DURATION;
+        if (isOutOfBounds(nx, ny) || (cellOccupied && !cellFresh)) {
             if (-1 > bestScore) { bestScore = -1; best = [dir]; }
             else if (-1 === bestScore) best.push(dir);
             continue;
@@ -1624,7 +1740,11 @@ function chooseNPCDirection(npc) {
             const { dx, dy } = dirToDelta(dir);
             const nx = npc.x + dx;
             const ny = npc.y + dy;
-            return !isOutOfBounds(nx, ny) && occupiedGrid[nx][ny] === null;
+            if (isOutOfBounds(nx, ny)) return false;
+            if (occupiedGrid[nx][ny] === null) return true;
+            // Fresh poop counts as safe
+            const ct = trailTimeGrid[nx] ? trailTimeGrid[nx][ny] : 0;
+            return ct > 0 && (now - ct) < FRESH_POOP_DURATION;
         });
         if (safe.length > 0) return safe[Math.floor(Math.random() * safe.length)];
     }
@@ -1737,9 +1857,13 @@ function moveAllUnicorns() {
         if (isOutOfBounds(m.newX, m.newY)) { killUnicorn(u); continue; }
         const occupied = occupiedGrid[m.newX][m.newY];
         if (occupied !== null) {
-            // Ghost mode OR Ghost Pup (one-time) lets player pass through trails
-            if (u.isPlayer && isGhost) {
-                // Pass through — powerup active
+            // Fresh poop is passable
+            const cellTime = trailTimeGrid[m.newX] ? trailTimeGrid[m.newX][m.newY] : 0;
+            const isFreshPoop = cellTime > 0 && (performance.now() - cellTime) < FRESH_POOP_DURATION;
+            if (isFreshPoop) {
+                // Pass through fresh poop
+            } else if (u.isPlayer && isGhost) {
+                // Ghost mode — powerup active
             } else if (u.isPlayer && !dogGhostUsed && getDogBuff().ghostPass) {
                 dogGhostUsed = true;
                 playSound('collect');
@@ -1756,8 +1880,25 @@ function moveAllUnicorns() {
         }
         const hue = (u.hueStart + u.trail.length * 8) % 360;
         const color = `hsl(${hue}, 100%, 60%)`;
-        u.trail.push({ x: u.x, y: u.y, color });
+        u.trail.push({ x: u.x, y: u.y, color, time: performance.now() });
         occupiedGrid[u.x][u.y] = u.id;
+        trailTimeGrid[u.x][u.y] = performance.now();
+
+        // Wide trail for burst or widener
+        if ((burstActive || trailWidenerActive) && u.isPlayer) {
+            const perp = { up: [{dx:-1,dy:0},{dx:1,dy:0}], down: [{dx:-1,dy:0},{dx:1,dy:0}],
+                           left: [{dx:0,dy:-1},{dx:0,dy:1}], right: [{dx:0,dy:-1},{dx:0,dy:1}] };
+            for (const off of perp[u.dir] || []) {
+                const wx = u.x + off.dx, wy = u.y + off.dy;
+                if (!isOutOfBounds(wx, wy) && occupiedGrid[wx][wy] === null) {
+                    const wcolor = `hsl(${(u.hueStart + u.trail.length * 8 + 30) % 360}, 100%, 65%)`;
+                    u.trail.push({ x: wx, y: wy, color: wcolor, time: performance.now() });
+                    occupiedGrid[wx][wy] = u.id;
+                    trailTimeGrid[wx][wy] = performance.now();
+                }
+            }
+        }
+
         u.x = m.newX;
         u.y = m.newY;
     }
@@ -1899,29 +2040,59 @@ function drawTrails() {
         const trailLen = unicorn.trail.length;
         for (let si = 0; si < trailLen; si++) {
             const seg = unicorn.trail[si];
+            const isFresh = seg.time && (now - seg.time) < FRESH_POOP_DURATION;
             // Newer trail segments pulse subtly
             const age = trailLen - si;
-            const pulse = age < 5 ? (0.85 + 0.15 * Math.sin(performance.now() * 0.008 + si)) : 1;
-            ctx.globalAlpha = alpha * pulse;
-            ctx.fillStyle = seg.color;
-            const x = seg.x * GRID_SIZE + 1, y = seg.y * GRID_SIZE + 1;
-            const w = GRID_SIZE - 2, h = GRID_SIZE - 2, r = 3;
-            ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.lineTo(x + w - r, y);
-            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-            ctx.lineTo(x + w, y + h - r);
-            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-            ctx.lineTo(x + r, y + h);
-            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-            ctx.lineTo(x, y + r);
-            ctx.quadraticCurveTo(x, y, x + r, y);
-            ctx.closePath();
-            ctx.fill();
-            ctx.fillStyle = `rgba(255, 255, 255, ${0.2 * alpha})`;
-            ctx.beginPath();
-            ctx.arc(x + w * 0.35, y + h * 0.35, 2, 0, Math.PI * 2);
-            ctx.fill();
+            const pulse = age < 5 ? (0.85 + 0.15 * Math.sin(now * 0.008 + si)) : 1;
+            const freshAlpha = isFresh ? 0.45 : 1;
+            ctx.globalAlpha = alpha * pulse * freshAlpha;
+            if (isFresh) {
+                // Lighter, sparkly fresh poop
+                const freshPct = (now - seg.time) / FRESH_POOP_DURATION;
+                const wobble = Math.sin(now * 0.01 + si * 0.5) * 1;
+                const hslMatch = seg.color.match(/hsl\((\d+)/);
+                const segHue = hslMatch ? parseInt(hslMatch[1]) : 0;
+                ctx.fillStyle = `hsl(${segHue}, 100%, 78%)`;
+                const x = seg.x * GRID_SIZE + 1 + wobble, y = seg.y * GRID_SIZE + 1;
+                const w = GRID_SIZE - 2, h = GRID_SIZE - 2, r = 3;
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+                ctx.fill();
+                // Sparkle
+                ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * alpha * (1 - freshPct)})`;
+                ctx.beginPath();
+                ctx.arc(x + w * 0.5 + Math.sin(now * 0.015 + si) * 2, y + h * 0.3, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                ctx.fillStyle = seg.color;
+                const x = seg.x * GRID_SIZE + 1, y = seg.y * GRID_SIZE + 1;
+                const w = GRID_SIZE - 2, h = GRID_SIZE - 2, r = 3;
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+                ctx.lineTo(x + r, y + h);
+                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+                ctx.lineTo(x, y + r);
+                ctx.quadraticCurveTo(x, y, x + r, y);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = `rgba(255, 255, 255, ${0.2 * alpha})`;
+                ctx.beginPath();
+                ctx.arc(x + w * 0.35, y + h * 0.35, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
     }
     ctx.globalAlpha = 1;
@@ -3047,34 +3218,37 @@ function drawTouchControls() {
     const r = DPAD_RADIUS;
     const btnR = DPAD_BTN_SIZE / 2;
 
-    ctx.beginPath();
-    ctx.arc(dpadCenterX, dpadCenterY, r * 1.3, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
-    ctx.fill();
-
-    const dirs = [
-        { dir: 'up',    ox: 0,  oy: -r * 0.7, label: '\u25B2' },
-        { dir: 'down',  ox: 0,  oy:  r * 0.7, label: '\u25BC' },
-        { dir: 'left',  ox: -r * 0.7, oy: 0,  label: '\u25C0' },
-        { dir: 'right', ox:  r * 0.7, oy: 0,  label: '\u25B6' },
-    ];
-
-    for (const d of dirs) {
-        const bx = dpadCenterX + d.ox;
-        const by = dpadCenterY + d.oy;
-        const isActive = activeTouchDir === d.dir;
-        const alpha = isActive ? DPAD_ACTIVE_OPACITY : DPAD_OPACITY;
+    if (showDpad) {
         ctx.beginPath();
-        ctx.arc(bx, by, btnR, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        ctx.arc(dpadCenterX, dpadCenterY, r * 1.3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
         ctx.fill();
-        ctx.font = 'bold 22px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = `rgba(50, 0, 80, ${alpha + 0.2})`;
-        ctx.fillText(d.label, bx, by);
+
+        const dirs = [
+            { dir: 'up',    ox: 0,  oy: -r * 0.7, label: '\u25B2' },
+            { dir: 'down',  ox: 0,  oy:  r * 0.7, label: '\u25BC' },
+            { dir: 'left',  ox: -r * 0.7, oy: 0,  label: '\u25C0' },
+            { dir: 'right', ox:  r * 0.7, oy: 0,  label: '\u25B6' },
+        ];
+
+        for (const d of dirs) {
+            const bx = dpadCenterX + d.ox;
+            const by = dpadCenterY + d.oy;
+            const isActive = activeTouchDir === d.dir;
+            const alpha = isActive ? DPAD_ACTIVE_OPACITY : DPAD_OPACITY;
+            ctx.beginPath();
+            ctx.arc(bx, by, btnR, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.fill();
+            ctx.font = 'bold 22px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = `rgba(50, 0, 80, ${alpha + 0.2})`;
+            ctx.fillText(d.label, bx, by);
+        }
     }
 
+    // Pause button
     touchPauseBtn.x = CANVAS_WIDTH - 50;
     touchPauseBtn.y = 60;
     ctx.beginPath();
@@ -3087,6 +3261,7 @@ function drawTouchControls() {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
     ctx.fillText('II', touchPauseBtn.x, touchPauseBtn.y);
 
+    // Sound button
     touchSoundBtn.x = CANVAS_WIDTH - 50;
     touchSoundBtn.y = 120;
     ctx.beginPath();
@@ -3098,6 +3273,68 @@ function drawTouchControls() {
     ctx.textBaseline = 'middle';
     ctx.fillStyle = soundEnabled ? 'rgba(255, 255, 255, 0.6)' : 'rgba(255, 100, 100, 0.6)';
     ctx.fillText(soundEnabled ? '\u266B' : '\u2715', touchSoundBtn.x, touchSoundBtn.y);
+
+    // Burst button (right side, bottom)
+    const burstBtnX = CANVAS_WIDTH - 100, burstBtnY = CANVAS_HEIGHT - 90;
+    const burstBtnR = 32;
+    touchBurstBtn.x = burstBtnX;
+    touchBurstBtn.y = burstBtnY;
+    touchBurstBtn.r = burstBtnR;
+    ctx.beginPath();
+    ctx.arc(burstBtnX, burstBtnY, burstBtnR, 0, Math.PI * 2);
+    ctx.fillStyle = burstCooldownTimer > 0 ? 'rgba(100,100,100,0.3)' : 'rgba(0,230,255,0.4)';
+    ctx.fill();
+    // Cooldown arc
+    if (burstCooldownTimer > 0) {
+        const pct = burstCooldownTimer / BURST_COOLDOWN;
+        ctx.beginPath();
+        ctx.moveTo(burstBtnX, burstBtnY);
+        ctx.arc(burstBtnX, burstBtnY, burstBtnR, -Math.PI/2, -Math.PI/2 + Math.PI*2*(1-pct));
+        ctx.fillStyle = 'rgba(0,230,255,0.25)';
+        ctx.fill();
+    }
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('BURST', burstBtnX, burstBtnY);
+
+    // Splatter button (above burst)
+    const splatBtnX = CANVAS_WIDTH - 100, splatBtnY = CANVAS_HEIGHT - 170;
+    const splatBtnR = 32;
+    touchSplatBtn.x = splatBtnX;
+    touchSplatBtn.y = splatBtnY;
+    touchSplatBtn.r = splatBtnR;
+    ctx.beginPath();
+    ctx.arc(splatBtnX, splatBtnY, splatBtnR, 0, Math.PI * 2);
+    ctx.fillStyle = splatterCooldownTimer > 0 ? 'rgba(100,100,100,0.3)' : 'rgba(139,69,19,0.4)';
+    ctx.fill();
+    // Cooldown arc
+    if (splatterCooldownTimer > 0) {
+        const pct = splatterCooldownTimer / SPLATTER_COOLDOWN;
+        ctx.beginPath();
+        ctx.moveTo(splatBtnX, splatBtnY);
+        ctx.arc(splatBtnX, splatBtnY, splatBtnR, -Math.PI/2, -Math.PI/2 + Math.PI*2*(1-pct));
+        ctx.fillStyle = 'rgba(139,69,19,0.25)';
+        ctx.fill();
+    }
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('SPLAT', splatBtnX, splatBtnY);
+
+    // Swipe hint (first 3 seconds or until first swipe)
+    if (!firstSwipeTime && survivalTimer < 3000) {
+        const hintAlpha = Math.max(0, 1 - survivalTimer / 3000);
+        ctx.globalAlpha = hintAlpha;
+        ctx.font = 'bold 22px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#FFD700';
+        ctx.fillText('Swipe to move', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
+        ctx.globalAlpha = 1;
+    }
 }
 
 // ---- SCREENS ----
@@ -3273,7 +3510,6 @@ function drawCustomizeScreen(delta) {
     const tabs = [
         { id: 'avatar', label: 'Unicorn' },
         { id: 'accessory', label: 'Accessory' },
-        { id: 'mane', label: 'Mane' },
         { id: 'dogs', label: 'Dogs' },
     ];
     const tabW = 130, tabH = 34, tabGap = 8;
@@ -3380,62 +3616,6 @@ function drawCustomizeScreen(delta) {
                 ctx.fillStyle = canAfford ? '#FFD700' : '#FF6B6B';
                 ctx.fillText(`\uD83C\uDF08 ${shop.cost}`, bx + accW / 2, by + accH - 5);
             }
-        }
-
-    } else if (customizeTab === 'mane') {
-        // Strand selector
-        ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#FFD700';
-        ctx.fillText('Select Strand', CANVAS_WIDTH / 2, contentY);
-        const strandCount = MANE_STRANDS + 3; // 7 mane + 3 forelock
-        const ss = 32, sg = 6;
-        const stotalW = strandCount * (ss + sg) - sg;
-        const ssx = (CANVAS_WIDTH - stotalW) / 2;
-        for (let i = 0; i < strandCount; i++) {
-            const bx = ssx + i * (ss + sg), by = contentY + 16;
-            customBtns.push({ x: bx, y: by, w: ss, h: ss, action: 'maneStrand', index: i });
-            const isSel = maneEditStrand === i;
-            roundRect(ctx, bx, by, ss, ss, 5);
-            ctx.fillStyle = selectedManeColors[i] || '#FF69B4'; ctx.fill();
-            if (isSel) { ctx.strokeStyle = '#FFF'; ctx.lineWidth = 2.5; ctx.stroke(); }
-            ctx.font = '8px sans-serif'; ctx.fillStyle = '#FFF';
-            ctx.fillText(i < MANE_STRANDS ? `M${i+1}` : `B${i-MANE_STRANDS+1}`, bx + ss / 2, by + ss + 9);
-        }
-
-        // Color palette for selected strand
-        ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#E0B0FF';
-        ctx.fillText('Pick Color', CANVAS_WIDTH / 2, contentY + 78);
-        const pcs = 28, pcg = 5;
-        const colsPerRow = 12;
-        for (let i = 0; i < MANE_COLOR_PALETTE.length; i++) {
-            const row = Math.floor(i / colsPerRow), col = i % colsPerRow;
-            const rowW = Math.min(colsPerRow, MANE_COLOR_PALETTE.length - row * colsPerRow) * (pcs + pcg) - pcg;
-            const rx = (CANVAS_WIDTH - rowW) / 2;
-            const bx = rx + col * (pcs + pcg), by = contentY + 94 + row * (pcs + pcg);
-            customBtns.push({ x: bx, y: by, w: pcs, h: pcs, action: 'maneColor', color: MANE_COLOR_PALETTE[i] });
-            roundRect(ctx, bx, by, pcs, pcs, 4);
-            ctx.fillStyle = MANE_COLOR_PALETTE[i]; ctx.fill();
-            if (selectedManeColors[maneEditStrand] === MANE_COLOR_PALETTE[i]) {
-                ctx.strokeStyle = '#FFF'; ctx.lineWidth = 2; ctx.stroke();
-            }
-        }
-
-        // Hairstyle selector
-        const hsY = contentY + 165;
-        ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#E0B0FF';
-        ctx.fillText('Hairstyle', CANVAS_WIDTH / 2, hsY);
-        const hsW = 100, hsH = 36, hsG = 8;
-        const hsTotalW = HAIRSTYLES.length * (hsW + hsG) - hsG;
-        const hsSx = (CANVAS_WIDTH - hsTotalW) / 2;
-        for (let i = 0; i < HAIRSTYLES.length; i++) {
-            const bx = hsSx + i * (hsW + hsG), by = hsY + 14;
-            const isSel = selectedHairstyle === HAIRSTYLES[i].id;
-            customBtns.push({ x: bx, y: by, w: hsW, h: hsH, action: 'hairstyle', styleId: HAIRSTYLES[i].id });
-            roundRect(ctx, bx, by, hsW, hsH, 7);
-            ctx.fillStyle = isSel ? '#C77DFF' : 'rgba(255,255,255,0.1)'; ctx.fill();
-            if (isSel) { ctx.strokeStyle = '#E0B0FF'; ctx.lineWidth = 2; ctx.stroke(); }
-            ctx.font = isSel ? 'bold 14px sans-serif' : '14px sans-serif';
-            ctx.fillStyle = isSel ? '#FFF' : '#BBB';
-            ctx.fillText(HAIRSTYLES[i].label, bx + hsW / 2, by + hsH / 2);
         }
 
     } else if (customizeTab === 'dogs') {
@@ -3836,6 +4016,62 @@ function roundRect(ctx, x, y, w, h, r) {
     ctx.closePath();
 }
 
+// ---- BURST / SPLATTER / TUTORIAL ----
+function triggerBurst() {
+    if (burstCooldownTimer > 0 || burstActive || !player || !player.alive) return;
+    burstActive = true;
+    burstTimer = BURST_DURATION;
+    burstCooldownTimer = BURST_COOLDOWN;
+    playSound('powerup');
+}
+
+function triggerSplatter() {
+    if (splatterCooldownTimer > 0 || !player || !player.alive) return;
+    splatterCooldownTimer = SPLATTER_COOLDOWN;
+    const oppDir = OPPOSITES[player.dir];
+    const { dx, dy } = dirToDelta(oppDir);
+    const cx = player.x + dx * 2, cy = player.y + dy * 2;
+    for (let ox = -SPLATTER_RADIUS; ox <= SPLATTER_RADIUS; ox++) {
+        for (let oy = -SPLATTER_RADIUS; oy <= SPLATTER_RADIUS; oy++) {
+            if (ox*ox + oy*oy > SPLATTER_RADIUS * SPLATTER_RADIUS + 1) continue;
+            const sx = cx + ox, sy = cy + oy;
+            if (isOutOfBounds(sx, sy) || occupiedGrid[sx][sy] !== null) continue;
+            const hue = (player.hueStart + player.trail.length * 8 + (ox+oy)*20) % 360;
+            player.trail.push({ x: sx, y: sy, color: `hsl(${hue}, 90%, 55%)`, time: performance.now() });
+            occupiedGrid[sx][sy] = player.id;
+            trailTimeGrid[sx][sy] = performance.now();
+        }
+    }
+    playSound('npc_death');
+    triggerShake(2, 100);
+    // Splatter particles
+    const px = cx * GRID_SIZE + GRID_SIZE/2, py = cy * GRID_SIZE + GRID_SIZE/2;
+    for (let j = 0; j < 10; j++) {
+        const a = (Math.PI * 2 * j) / 10;
+        collectParticles.push({ x: px, y: py, vx: Math.cos(a)*3, vy: Math.sin(a)*3, life: 1, color: '#8B4513', size: 4 });
+    }
+}
+
+function drawTutorialHint() {
+    if (tutorialCompleted || currentWave !== 0) return;
+    if (tutorialStep >= TUTORIAL_STEPS.length) return;
+    const step = TUTORIAL_STEPS[tutorialStep];
+    const alpha = Math.min(1, tutorialStepTimer / 300, (step.duration - tutorialStepTimer) / 500);
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+    const bw = 440, bh = 44;
+    const bx = CANVAS_WIDTH/2 - bw/2, by = CANVAS_HEIGHT - 100;
+    roundRect(ctx, bx, by, bw, bh, 12);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fill();
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText(step.text, CANVAS_WIDTH/2, by + bh/2);
+    ctx.globalAlpha = 1;
+}
+
 // ---- GAME FLOW ----
 function resetToTitle() {
     gameState = TITLE;
@@ -3883,6 +4119,34 @@ function updateGame(delta) {
     const speedBonus = (accBuff.speedBonus || 0) + (dogBuff.speedBonus || 0);
     let effectiveInterval = waveMoveInterval * (1 + wizResist) * (1 - speedBonus);
     if (activePowerup && activePowerup.type.id === 'speed') effectiveInterval *= 0.6;
+
+    // Speed burst
+    if (burstActive) {
+        effectiveInterval *= BURST_SPEED_MULT;
+        burstTimer -= delta;
+        if (burstTimer <= 0) burstActive = false;
+    }
+    if (burstCooldownTimer > 0) burstCooldownTimer -= delta;
+    if (splatterCooldownTimer > 0) splatterCooldownTimer -= delta;
+
+    // Trail widener timer
+    if (trailWidenerActive) {
+        trailWidenerTimer -= delta;
+        if (trailWidenerTimer <= 0) { trailWidenerActive = false; }
+    }
+
+    // Tutorial progression
+    if (currentWave === 0 && !tutorialCompleted && gameState === PLAYING) {
+        tutorialStepTimer += delta;
+        if (tutorialStep < TUTORIAL_STEPS.length && tutorialStepTimer >= TUTORIAL_STEPS[tutorialStep].duration) {
+            tutorialStepTimer = 0;
+            tutorialStep++;
+            if (tutorialStep >= TUTORIAL_STEPS.length) {
+                tutorialCompleted = true;
+                saveSaveData();
+            }
+        }
+    }
 
     for (const u of unicorns) {
         if (u.alive) u.trotPhase += TROT_SPEED * delta;
@@ -3995,6 +4259,7 @@ function gameLoop(timestamp) {
             drawHUD();
             drawActivePowerup();
             drawBossHealthBar();
+            drawTutorialHint();
             drawAchievementPopup(clampedDelta);
             drawUnlockPopup();
             // Ghost mode visual indicator
