@@ -190,10 +190,10 @@ const HAIRSTYLES = [
 
 // ---- COMPANIONS ----
 // ---- RAINBOW POINTS (currency) ----
-const RP_PER_MATCH = 10;
-const RP_PER_FOOD = 1;
-const RP_PER_WAVE = 5;
-const RP_BOSS_BONUS = 25;
+const RP_PER_MATCH = 2;              // reduced ~80% from original
+const RP_PER_FOOD = 0;               // no RP per food (was 1)
+const RP_PER_WAVE = 1;               // reduced from 5
+const RP_BOSS_BONUS = 5;             // reduced from 25
 
 // ---- DOG COMPANION SYSTEM ----
 const COMPANION_FOLLOW_DELAY = 10;       // grid steps behind player in history
@@ -234,21 +234,21 @@ function getDogBuff() { return getEquippedDog().buff || {}; }
 // Add cost + rarity + buff to existing accessories
 const ACCESSORY_SHOP = {
     'none':               { cost: 0,   rarity: 'common',    buff: null, buffDesc: '' },
-    'crown':              { cost: 100, rarity: 'common',    buff: { scoreMult: 0.05 }, buffDesc: '+5% score' },
-    'party_hat':          { cost: 50,  rarity: 'common',    buff: null, buffDesc: 'Just fun!' },
-    'top_hat':            { cost: 150, rarity: 'rare',      buff: { scoreMult: 0.08 }, buffDesc: '+8% score' },
-    'wizard_hat_tall':    { cost: 250, rarity: 'rare',      buff: { speedResist: 0.10 }, buffDesc: 'Slower speed scaling' },
-    'wizard_hat_wide':    { cost: 250, rarity: 'rare',      buff: { poopValue: 0.10 }, buffDesc: '+10% pickup value' },
-    'helmet':             { cost: 300, rarity: 'epic',      buff: { freeHit: true }, buffDesc: '1 free collision' },
-    'pirate_hat':         { cost: 200, rarity: 'rare',      buff: { scoreMult: 0.05 }, buffDesc: '+5% score' },
-    'flower_crown':       { cost: 75,  rarity: 'common',    buff: null, buffDesc: 'Pretty!' },
-    'sunglasses_square':  { cost: 150, rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
-    'sunglasses_angled':  { cost: 150, rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
-    'halo':               { cost: 500, rarity: 'legendary', buff: { bonusLife: true }, buffDesc: '+1 life every 10 waves' },
-    'headphones_blue':    { cost: 100, rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
-    'headphones_pink':    { cost: 100, rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
-    'bow':                { cost: 75,  rarity: 'common',    buff: null, buffDesc: 'Cute!' },
-    'cape_red':           { cost: 750, rarity: 'legendary', buff: { scoreMult: 0.10, speedBonus: 0.05 }, buffDesc: '+10% score +5% speed' },
+    'crown':              { cost: 15,  rarity: 'common',    buff: { scoreMult: 0.05 }, buffDesc: '+5% score' },
+    'party_hat':          { cost: 8,   rarity: 'common',    buff: null, buffDesc: 'Just fun!' },
+    'top_hat':            { cost: 25,  rarity: 'rare',      buff: { scoreMult: 0.08 }, buffDesc: '+8% score' },
+    'wizard_hat_tall':    { cost: 40,  rarity: 'rare',      buff: { speedResist: 0.10 }, buffDesc: 'Slower speed scaling' },
+    'wizard_hat_wide':    { cost: 40,  rarity: 'rare',      buff: { poopValue: 0.10 }, buffDesc: '+10% pickup value' },
+    'helmet':             { cost: 50,  rarity: 'epic',      buff: { freeHit: true }, buffDesc: '1 free collision' },
+    'pirate_hat':         { cost: 30,  rarity: 'rare',      buff: { scoreMult: 0.05 }, buffDesc: '+5% score' },
+    'flower_crown':       { cost: 10,  rarity: 'common',    buff: null, buffDesc: 'Pretty!' },
+    'sunglasses_square':  { cost: 25,  rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
+    'sunglasses_angled':  { cost: 25,  rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
+    'halo':               { cost: 80,  rarity: 'legendary', buff: { bonusLife: true }, buffDesc: '+1 life every 10 waves' },
+    'headphones_blue':    { cost: 15,  rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
+    'headphones_pink':    { cost: 15,  rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
+    'bow':                { cost: 10,  rarity: 'common',    buff: null, buffDesc: 'Cute!' },
+    'cape_red':           { cost: 120, rarity: 'legendary', buff: { scoreMult: 0.10, speedBonus: 0.05 }, buffDesc: '+10% score +5% speed' },
 };
 
 function isAccessoryOwned(accId) {
@@ -288,11 +288,12 @@ const CLEANSE_RADIUS = 5;                // grid cells cleared around player
 
 // ---- BOSS SYSTEM ----
 const BOSS_WAVE_INTERVAL = 5;            // boss every N waves
+// Boss health scales: base + (bossNumber * 0.5), capped at reasonable levels
 const BOSS_TYPES = [
-    { id: 'charger',    label: 'The Charger',     health: 5, speed: 0.7, color: '#FF1744', bodyColor: '#8B0000',
+    { id: 'charger',    label: 'The Charger',     baseHealth: 2, speed: 0.85, color: '#FF1744', bodyColor: '#8B0000',
       border: '#FF5252', hornGradient: ['#FF1744','#D50000','#B71C1C'], maneColors: ['#FF5252','#FF1744','#D50000'],
       tailColors: ['#FF5252','#FF1744'], eyeColor: '#FFEB3B', belly: '#FF8A80', hoofColor: '#D50000' },
-    { id: 'phantom',    label: 'The Phantom',      health: 4, speed: 1.0, color: '#7C4DFF', bodyColor: '#311B92',
+    { id: 'phantom',    label: 'The Phantom',      baseHealth: 2, speed: 1.0, color: '#7C4DFF', bodyColor: '#311B92',
       border: '#B388FF', hornGradient: ['#7C4DFF','#651FFF','#6200EA'], maneColors: ['#B388FF','#7C4DFF','#651FFF'],
       tailColors: ['#B388FF','#7C4DFF'], eyeColor: '#FF4081', belly: '#9575CD', hoofColor: '#651FFF' },
 ];
@@ -505,6 +506,7 @@ let shakeIntensity = 0;
 let burstActive = false;
 let burstTimer = 0;
 let burstCooldownTimer = 0;
+let playerBurstAccum = 0;
 
 // ---- SPLATTER STATE ----
 let splatterCooldownTimer = 0;
@@ -872,6 +874,7 @@ function spawnUnicorns() {
     burstActive = false;
     burstTimer = 0;
     burstCooldownTimer = 0;
+    playerBurstAccum = 0;
     splatterCooldownTimer = 0;
     trailWidenerActive = false;
     trailWidenerTimer = 0;
@@ -918,7 +921,7 @@ function spawnUnicorns() {
     }
 
     // Pre-seed the map with collectibles so it feels lively from the start
-    for (let i = 0; i < 6; i++) spawnCollectible();
+    for (let i = 0; i < 16; i++) spawnCollectible();
 }
 
 // ---- INPUT HANDLING ----
@@ -1313,7 +1316,7 @@ function handleCustomizeTouch(cx, cy) {
 
 // ---- COLLECTIBLE SYSTEM ----
 function spawnCollectible() {
-    if (collectibles.length >= 8) return;
+    if (collectibles.length >= 16) return;
     const type = COLLECTIBLE_TYPES[Math.floor(Math.random() * COLLECTIBLE_TYPES.length)];
     for (let attempt = 0; attempt < 50; attempt++) {
         const x = randomInt(2, COLS - 3);
@@ -1505,8 +1508,11 @@ function spawnBoss() {
     boss = createUnicorn('boss', spawnX, spawnY, 'left', false, 0, theme);
     boss.isBoss = true;
     boss.bossType = bt;
-    boss.health = bt.health;
-    boss.maxHealth = bt.health;
+    // Boss number (1st boss, 2nd boss, etc.) — scales health from easy to hard
+    const bossNumber = Math.floor(currentWave / BOSS_WAVE_INTERVAL) + 1;
+    const scaledHealth = Math.min(12, Math.floor(bt.baseHealth + bossNumber * 0.8));
+    boss.health = scaledHealth;
+    boss.maxHealth = scaledHealth;
     unicorns.push(boss);
 }
 
@@ -1953,8 +1959,7 @@ function recordRound(won) {
             modesWon.push(selectedGameMode);
         }
     } else {
-        // On loss, keep currentWave at 0 but player can select up to highestWave
-        currentWave = 0;
+        // On loss, stay at the wave you were on (don't reset)
     }
 
     checkAchievements();
@@ -1977,16 +1982,21 @@ function updateParticles(delta) {
 }
 
 function spawnWinParticles() {
-    for (let i = 0; i < 60; i++) {
+    // Big celebration burst
+    for (let i = 0; i < 120; i++) {
+        const angle = (Math.PI * 2 * i) / 120;
+        const speed = 2 + Math.random() * 4;
         winParticles.push({
-            x: CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 400,
-            y: CANVAS_HEIGHT / 2 + (Math.random() - 0.5) * 200,
-            vx: (Math.random() - 0.5) * 4, vy: -1 - Math.random() * 3,
-            life: 0.5 + Math.random() * 0.5,
+            x: CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 200,
+            y: CANVAS_HEIGHT / 2 + (Math.random() - 0.5) * 100,
+            vx: Math.cos(angle) * speed + (Math.random() - 0.5) * 2,
+            vy: Math.sin(angle) * speed - Math.random() * 3,
+            life: 0.6 + Math.random() * 0.8,
             color: `hsl(${Math.random() * 360}, 100%, 70%)`,
-            size: 3 + Math.random() * 5,
+            size: 3 + Math.random() * 7,
         });
     }
+    triggerShake(4, 300);
 }
 
 function drawParticles(particles) {
@@ -3708,6 +3718,21 @@ function drawCountdownScreen() {
     ctx.fillStyle = color;
     ctx.fillText(text, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
 
+    // Boss announcement
+    if (isBossWave) {
+        const bossIdx = Math.floor(currentWave / BOSS_WAVE_INTERVAL) % BOSS_TYPES.length;
+        const bt = BOSS_TYPES[bossIdx];
+        const bossNum = Math.floor(currentWave / BOSS_WAVE_INTERVAL) + 1;
+        ctx.font = 'bold 40px sans-serif';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillText(`\u26A0\uFE0F BOSS FIGHT #${bossNum}! \u26A0\uFE0F`, CANVAS_WIDTH / 2 + 2, CANVAS_HEIGHT / 2 + 72);
+        ctx.fillStyle = bt.color;
+        ctx.fillText(`\u26A0\uFE0F BOSS FIGHT #${bossNum}! \u26A0\uFE0F`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 70);
+        ctx.font = '22px sans-serif';
+        ctx.fillStyle = '#FF6B6B';
+        ctx.fillText(bt.label, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 105);
+    }
+
     ctx.restore();
 }
 
@@ -4028,6 +4053,8 @@ function triggerBurst() {
 function triggerSplatter() {
     if (splatterCooldownTimer > 0 || !player || !player.alive) return;
     splatterCooldownTimer = SPLATTER_COOLDOWN;
+    // Splatter also triggers a burst
+    triggerBurst();
     const oppDir = OPPOSITES[player.dir];
     const { dx, dy } = dirToDelta(oppDir);
     const cx = player.x + dx * 2, cy = player.y + dy * 2;
@@ -4037,9 +4064,10 @@ function triggerSplatter() {
             const sx = cx + ox, sy = cy + oy;
             if (isOutOfBounds(sx, sy) || occupiedGrid[sx][sy] !== null) continue;
             const hue = (player.hueStart + player.trail.length * 8 + (ox+oy)*20) % 360;
-            player.trail.push({ x: sx, y: sy, color: `hsl(${hue}, 90%, 55%)`, time: performance.now() });
+            // Splatter hardens instantly (time = 0 so it's immediately deadly)
+            player.trail.push({ x: sx, y: sy, color: `hsl(${hue}, 90%, 55%)`, time: 0 });
             occupiedGrid[sx][sy] = player.id;
-            trailTimeGrid[sx][sy] = performance.now();
+            trailTimeGrid[sx][sy] = 1; // ancient timestamp = already hardened
         }
     }
     playSound('npc_death');
@@ -4090,6 +4118,8 @@ function startCountdown() {
     countdownPhase = -1;
     gameState = COUNTDOWN;
     lastTimestamp = performance.now();
+    // Boss announcement sound
+    if (isBossWave) playSound('boss_hit');
 }
 
 function updateCountdown(delta) {
@@ -4120,9 +4150,8 @@ function updateGame(delta) {
     let effectiveInterval = waveMoveInterval * (1 + wizResist) * (1 - speedBonus);
     if (activePowerup && activePowerup.type.id === 'speed') effectiveInterval *= 0.6;
 
-    // Speed burst
+    // Speed burst timers (burst does NOT change global interval — player gets extra moves instead)
     if (burstActive) {
-        effectiveInterval *= BURST_SPEED_MULT;
         burstTimer -= delta;
         if (burstTimer <= 0) burstActive = false;
     }
@@ -4154,6 +4183,36 @@ function updateGame(delta) {
     while (moveAccumulator >= effectiveInterval) {
         moveAccumulator -= effectiveInterval;
         if (gameState === PLAYING) moveAllUnicorns();
+    }
+
+    // Burst: give player extra solo moves (NPCs don't speed up)
+    if (burstActive && player && player.alive && gameState === PLAYING) {
+        playerBurstAccum += delta;
+        const burstInterval = effectiveInterval * 0.5; // player moves ~2x during burst
+        while (playerBurstAccum >= burstInterval) {
+            playerBurstAccum -= burstInterval;
+            // Move only the player
+            const { dx, dy } = dirToDelta(player.nextDir);
+            const nx = player.x + dx, ny = player.y + dy;
+            if (!isOutOfBounds(nx, ny)) {
+                const occ = occupiedGrid[nx][ny];
+                const ct = trailTimeGrid[nx] ? trailTimeGrid[nx][ny] : 0;
+                const fresh = ct > 0 && (performance.now() - ct) < FRESH_POOP_DURATION;
+                if (occ === null || fresh) {
+                    player.dir = player.nextDir;
+                    const hue = (player.hueStart + player.trail.length * 8) % 360;
+                    player.trail.push({ x: player.x, y: player.y, color: `hsl(${hue}, 100%, 60%)`, time: performance.now() });
+                    occupiedGrid[player.x][player.y] = player.id;
+                    trailTimeGrid[player.x][player.y] = performance.now();
+                    player.x = nx;
+                    player.y = ny;
+                    checkCollectiblePickup();
+                    checkPowerupPickup();
+                }
+            }
+        }
+    } else {
+        playerBurstAccum = 0;
     }
 
     // Scoring: survival score (hat + companion bonuses)
