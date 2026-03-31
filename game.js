@@ -408,6 +408,7 @@ let blinkTimer = 0;
 
 // ---- WAVE STATE ----
 let currentWave = 0;             // 0-indexed, resets on loss
+let highestWave = 0;             // highest wave ever reached (persisted)
 let waveNpcCount = 2;
 let waveMoveInterval = 110;
 let waveLookahead = 4;
@@ -516,6 +517,7 @@ function loadSaveData() {
             if (typeof data.equippedDogId === 'string') equippedDogId = data.equippedDogId;
             if (typeof data.rainbowPoints === 'number') rainbowPoints = data.rainbowPoints;
             if (Array.isArray(data.ownedAccessories)) ownedAccessories = data.ownedAccessories;
+            if (typeof data.highestWave === 'number') highestWave = data.highestWave;
         }
     } catch (e) {}
     applyPlayerColor();
@@ -542,6 +544,7 @@ function saveSaveData() {
             equippedDogId: equippedDogId,
             rainbowPoints: rainbowPoints,
             ownedAccessories: ownedAccessories,
+            highestWave: highestWave,
         }));
     } catch (e) {}
 }
@@ -855,6 +858,8 @@ document.addEventListener('keydown', (e) => {
             if (e.key === 'c' || e.key === 'C') { gameState = CUSTOMIZE; customizePreviewTrot = 0; }
             if (e.key === 'g' || e.key === 'G') { gameState = MODE_SELECT; }
             if (e.key === 'h' || e.key === 'H' || e.key === '?') { gameState = INSTRUCTIONS; }
+            if (e.key === 'ArrowLeft' && currentWave > 0) { currentWave--; }
+            if (e.key === 'ArrowRight' && currentWave < highestWave) { currentWave++; }
             break;
         case INSTRUCTIONS:
             if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ' || e.key === 'Backspace') gameState = TITLE;
@@ -1138,12 +1143,16 @@ let titleStartBtn = { x: 0, y: 0, w: 0, h: 0 };
 let titleModeBtn = { x: 0, y: 0, w: 0, h: 0 };
 let titleCustomBtn = { x: 0, y: 0, w: 0, h: 0 };
 let titleHelpBtn = { x: 0, y: 0, w: 0, h: 0 };
+let titleWaveLeftBtn = { x: 0, y: 0, w: 0, h: 0 };
+let titleWaveRightBtn = { x: 0, y: 0, w: 0, h: 0 };
 
 function handleTitleTouch(cx, cy) {
     if (hitTest(cx, cy, titleStartBtn)) { startCountdown(); return; }
     if (hitTest(cx, cy, titleModeBtn)) { gameState = MODE_SELECT; return; }
     if (hitTest(cx, cy, titleCustomBtn)) { gameState = CUSTOMIZE; customizePreviewTrot = 0; return; }
     if (hitTest(cx, cy, titleHelpBtn)) { gameState = INSTRUCTIONS; return; }
+    if (hitTest(cx, cy, titleWaveLeftBtn) && currentWave > 0) { currentWave--; return; }
+    if (hitTest(cx, cy, titleWaveRightBtn) && currentWave < highestWave) { currentWave++; return; }
 }
 
 // ---- CUSTOMIZE SCREEN TOUCH/CLICK HANDLING ----
@@ -1797,11 +1806,13 @@ function recordRound(won) {
 
     if (won) {
         currentWave++;
+        if (currentWave > highestWave) highestWave = currentWave;
         checkAchievement('first_win');
         if (!modesWon.includes(selectedGameMode)) {
             modesWon.push(selectedGameMode);
         }
     } else {
+        // On loss, keep currentWave at 0 but player can select up to highestWave
         currentWave = 0;
     }
 
@@ -3155,7 +3166,35 @@ function drawTitleScreen() {
     // Rounds played badge
     ctx.font = '15px sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText(`Wave ${currentWave + 1}  |  Rounds: ${roundsPlayed}  |  \uD83C\uDF08 ${rainbowPoints}`, CANVAS_WIDTH / 2, boxY + 155);
+    ctx.fillText(`Rounds: ${roundsPlayed}  |  \uD83C\uDF08 ${rainbowPoints}`, CANVAS_WIDTH / 2, boxY + 148);
+
+    // ---- Wave selector (if player has beaten wave 1+) ----
+    if (highestWave > 0) {
+        const wsY = boxY + 168;
+        ctx.font = '14px sans-serif'; ctx.fillStyle = '#4FC3F7';
+        ctx.fillText(`Start at Wave: ${currentWave + 1}  (best: ${highestWave + 1})`, CANVAS_WIDTH / 2, wsY);
+
+        // Left/right arrows to change starting wave
+        const arrowW = 30, arrowH = 22;
+        const leftX = CANVAS_WIDTH / 2 - 120, rightX = CANVAS_WIDTH / 2 + 90;
+        titleWaveLeftBtn = { x: leftX, y: wsY - arrowH / 2, w: arrowW, h: arrowH };
+        titleWaveRightBtn = { x: rightX, y: wsY - arrowH / 2, w: arrowW, h: arrowH };
+
+        // Left arrow
+        roundRect(ctx, leftX, wsY - arrowH / 2, arrowW, arrowH, 5);
+        ctx.fillStyle = currentWave > 0 ? '#4FC3F7' : 'rgba(255,255,255,0.1)'; ctx.fill();
+        ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = currentWave > 0 ? '#FFF' : '#555';
+        ctx.fillText('\u25C0', leftX + arrowW / 2, wsY);
+
+        // Right arrow
+        roundRect(ctx, rightX, wsY - arrowH / 2, arrowW, arrowH, 5);
+        ctx.fillStyle = currentWave < highestWave ? '#4FC3F7' : 'rgba(255,255,255,0.1)'; ctx.fill();
+        ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = currentWave < highestWave ? '#FFF' : '#555';
+        ctx.fillText('\u25B6', rightX + arrowW / 2, wsY);
+    } else {
+        titleWaveLeftBtn = { x: 0, y: 0, w: 0, h: 0 };
+        titleWaveRightBtn = { x: 0, y: 0, w: 0, h: 0 };
+    }
 
     // ---- Buttons (2 rows of 2) ----
     const btnW = 250, btnH = 46, btnGap = 16;
