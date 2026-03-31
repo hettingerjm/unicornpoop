@@ -141,7 +141,7 @@ const MULTIPLIER_INCREMENT = 0.5;        // multiplier increase per tick
 const MAX_MULTIPLIER = 10;
 
 // ---- COLLECTIBLES ----
-const COLLECTIBLE_SPAWN_INTERVAL = 4000; // ms between spawns
+const COLLECTIBLE_SPAWN_INTERVAL = 1200; // ms between spawns (fast!)
 const COLLECTIBLE_TYPES = [
     { id: 'star',    label: 'Star',     score: 200,  color: '#FFD700', symbol: '\u2605', multiplierBoost: 0.5 },
     { id: 'gem',     label: 'Gem',      score: 500,  color: '#C77DFF', symbol: '\u25C6', multiplierBoost: 1.0 },
@@ -707,6 +707,9 @@ function spawnUnicorns() {
             unicorns.push(npc);
         }
     }
+
+    // Pre-seed the map with collectibles so it feels lively from the start
+    for (let i = 0; i < 6; i++) spawnCollectible();
 }
 
 // ---- INPUT HANDLING ----
@@ -1051,7 +1054,7 @@ function handleCustomizeTouch(cx, cy) {
 
 // ---- COLLECTIBLE SYSTEM ----
 function spawnCollectible() {
-    if (collectibles.length >= 3) return;
+    if (collectibles.length >= 8) return;
     const type = COLLECTIBLE_TYPES[Math.floor(Math.random() * COLLECTIBLE_TYPES.length)];
     for (let attempt = 0; attempt < 50; attempt++) {
         const x = randomInt(2, COLS - 3);
