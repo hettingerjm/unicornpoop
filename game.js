@@ -17,6 +17,75 @@ const SOUND_ENABLED_DEFAULT = true;
 const BG_COLOR = '#2d1b4e';         // dark purple background
 const GRID_LINE_COLOR = 'rgba(255, 255, 255, 0.03)';
 
+// ---- PNG AVATAR SYSTEM ----
+const UNICORN_AVATARS = [
+    { id: 'classic', label: 'Classic', path: 'assets/unicorns/classic.png' },
+    { id: 'candy',   label: 'Candy',   path: 'assets/unicorns/candy.png' },
+    { id: 'ice',     label: 'Ice',     path: 'assets/unicorns/ice.png' },
+    { id: 'neon',    label: 'Neon',    path: 'assets/unicorns/neon.png' },
+    { id: 'royal',   label: 'Royal',   path: 'assets/unicorns/royal.png' },
+    { id: 'shadow',  label: 'Shadow',  path: 'assets/unicorns/shadow.png' },
+];
+
+// Accessory anchor types: 'head_top', 'eyes', 'head_float', 'head_wrap', 'back_top', 'back'
+const ACCESSORIES = [
+    { id: 'none',               label: 'None',             path: null,                                  anchor: 'none' },
+    { id: 'crown',              label: 'Crown',            path: 'assets/accessories/crown.png',        anchor: 'head_top', ox: 0, oy: -6 },
+    { id: 'party_hat',          label: 'Party Hat',        path: 'assets/accessories/party_hat.png',    anchor: 'head_top', ox: 0, oy: -10 },
+    { id: 'top_hat',            label: 'Top Hat',          path: 'assets/accessories/top_hat.png',      anchor: 'head_top', ox: 0, oy: -8 },
+    { id: 'wizard_hat_tall',    label: 'Wizard Hat',       path: 'assets/accessories/wizard_hat_tall.png', anchor: 'head_top', ox: 0, oy: -12 },
+    { id: 'wizard_hat_wide',    label: 'Wizard Hat Wide',  path: 'assets/accessories/wizard_hat_wide.png', anchor: 'head_top', ox: 0, oy: -6 },
+    { id: 'helmet',             label: 'Helmet',           path: 'assets/accessories/helmet.png',       anchor: 'head_top', ox: 2, oy: -2 },
+    { id: 'pirate_hat',         label: 'Pirate Hat',       path: 'assets/accessories/pirate_hat.png',   anchor: 'head_top', ox: 0, oy: -8 },
+    { id: 'flower_crown',       label: 'Flower Crown',     path: 'assets/accessories/flower_crown.png', anchor: 'head_top', ox: 0, oy: -4 },
+    { id: 'sunglasses_square',  label: 'Sunglasses',       path: 'assets/accessories/sunglasses_square.png', anchor: 'eyes', ox: 6, oy: 4 },
+    { id: 'sunglasses_angled',  label: 'Cool Shades',      path: 'assets/accessories/sunglasses_angled.png', anchor: 'eyes', ox: 6, oy: 4 },
+    { id: 'halo',               label: 'Halo',             path: 'assets/accessories/halo.png',         anchor: 'head_float', ox: 0, oy: -14 },
+    { id: 'headphones_blue',    label: 'Blue Headphones',  path: 'assets/accessories/headphones_blue.png', anchor: 'head_wrap', ox: 0, oy: -2 },
+    { id: 'headphones_pink',    label: 'Pink Headphones',  path: 'assets/accessories/headphones_pink.png', anchor: 'head_wrap', ox: 0, oy: -2 },
+    { id: 'bow',                label: 'Bow',              path: 'assets/accessories/bow.png',          anchor: 'back_top', ox: -8, oy: -4 },
+    { id: 'cape_red',           label: 'Red Cape',         path: 'assets/accessories/cape_red.png',     anchor: 'back', ox: -12, oy: 4 },
+];
+
+// Image cache
+const imgCache = {};
+let imagesLoaded = false;
+
+function loadAllImages() {
+    let toLoad = 0, loaded = 0;
+    function onLoad() { loaded++; if (loaded >= toLoad) imagesLoaded = true; }
+    for (const av of UNICORN_AVATARS) {
+        toLoad++;
+        const img = new Image();
+        img.onload = onLoad;
+        img.onerror = onLoad;
+        img.src = av.path;
+        imgCache[av.id] = img;
+    }
+    for (const acc of ACCESSORIES) {
+        if (!acc.path) continue;
+        toLoad++;
+        const img = new Image();
+        img.onload = onLoad;
+        img.onerror = onLoad;
+        img.src = acc.path;
+        imgCache['acc_' + acc.id] = img;
+    }
+}
+loadAllImages();
+
+// Sprite rendering sizes (pixels) — unicorn PNGs are ~120x110
+const SPRITE_GAME_SIZE = 42;         // unicorn drawn size during gameplay
+const SPRITE_PREVIEW_SIZE = 160;     // unicorn drawn size in customize preview
+const ACCESSORY_SCALE_GAME = 0.30;   // accessory scale relative to unicorn in-game
+const ACCESSORY_SCALE_PREVIEW = 0.65; // accessory scale in preview
+const SPRITE_HITBOX_RATIO = 0.6;     // hitbox is smaller than visual
+
+// Animation state
+let lastDirChangeTime = 0;
+let lastCollectTime = 0;
+let capeAngle = 0;                   // smoothed cape lag
+
 // ---- UNICORN DRAWING SETTINGS (tweak these!) ----
 const PLAYER_SCALE = 1.5;           // player unicorn visual scale
 const NPC_SCALE = 1.15;             // NPC unicorn visual scale
@@ -319,7 +388,9 @@ let customizePreviewTrot = 0;
 let selectedCompanionId = 'none';
 let selectedHairstyle = 'flowing';
 let selectedManeColors = ['#FF69B4', '#C77DFF', '#7B68EE', '#4FC3F7', '#66BB6A', '#FFD700', '#FFFFFF'];
-let customizeTab = 'body';  // 'body' | 'mane' | 'hats' | 'companions'
+let selectedAvatarId = 'classic';
+let selectedAccessoryId = 'none';
+let customizeTab = 'avatar';  // 'avatar' | 'accessory' | 'mane' | 'companions'
 let maneEditStrand = 0;     // which strand index is selected for color editing
 
 // ---- SCORING STATE ----
@@ -394,6 +465,8 @@ function loadSaveData() {
             if (Array.isArray(data.achievements)) unlockedAchievements = data.achievements;
             if (Array.isArray(data.modesWon)) modesWon = data.modesWon;
             if (typeof data.gameMode === 'string') selectedGameMode = data.gameMode;
+            if (typeof data.avatarId === 'string') selectedAvatarId = data.avatarId;
+            if (typeof data.accessoryId === 'string') selectedAccessoryId = data.accessoryId;
         }
     } catch (e) {}
     applyPlayerColor();
@@ -415,6 +488,8 @@ function saveSaveData() {
             achievements: unlockedAchievements,
             modesWon: modesWon,
             gameMode: selectedGameMode,
+            avatarId: selectedAvatarId,
+            accessoryId: selectedAccessoryId,
         }));
     } catch (e) {}
 }
@@ -770,6 +845,7 @@ function setPlayerDirection(key) {
     const newDir = keyMap[key];
     if (!newDir || !player || !player.alive) return;
     if (newDir === OPPOSITES[player.dir]) return;
+    if (newDir !== player.dir) lastDirChangeTime = performance.now();
     player.nextDir = newDir;
 }
 
@@ -1048,6 +1124,8 @@ function handleCustomizeTouch(cx, cy) {
         }
         else if (btn.action === 'hairstyle') { selectedHairstyle = btn.styleId; saveSaveData(); }
         else if (btn.action === 'companion') { selectedCompanionId = btn.companionId; saveSaveData(); }
+        else if (btn.action === 'avatar') { selectedAvatarId = btn.avatarId; saveSaveData(); }
+        else if (btn.action === 'accessory') { selectedAccessoryId = btn.accessoryId; saveSaveData(); }
         return;
     }
 }
@@ -1075,6 +1153,7 @@ function checkCollectiblePickup() {
             score += Math.floor(c.type.score * scoreMultiplier * poopMult);
             scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + c.type.multiplierBoost);
             runCollectibles++;
+            lastCollectTime = performance.now();
             playSound('collect');
             // Sparkle particles
             const px = c.x * GRID_SIZE + GRID_SIZE / 2;
@@ -1945,15 +2024,128 @@ function drawHat(hatId, headX, headY, hr, s, trot) {
 }
 
 // ---- UNICORN DRAWING ----
+// ---- PNG SPRITE RENDERER ----
+// Draws a unicorn PNG + accessory with code-based animation.
+// Used for player in gameplay and in customize preview.
+// avatarId: string, accessoryId: string, cx/cy: center pixel pos,
+// dir: 'right'|'left'|'up'|'down', size: pixel size, trot: animation phase
+function drawSpriteUnicorn(avatarId, accessoryId, cx, cy, dir, size, trot) {
+    const avatarImg = imgCache[avatarId];
+    if (!avatarImg || !avatarImg.complete) return;
+
+    const now = performance.now();
+
+    // ---- Animation calculations ----
+    // Idle bob (1-2px)
+    const bob = Math.sin(now * 0.004) * 1.5;
+    // Squash/stretch on direction change
+    const dirAge = (now - lastDirChangeTime) / 1000;
+    const squash = dirAge < 0.15 ? 1 + 0.08 * Math.cos(dirAge / 0.15 * Math.PI) : 1;
+    const stretch = dirAge < 0.15 ? 1 - 0.06 * Math.cos(dirAge / 0.15 * Math.PI) : 1;
+    // Collect bounce
+    const collectAge = (now - lastCollectTime) / 1000;
+    const collectBounce = collectAge < 0.2 ? -3 * Math.sin(collectAge / 0.2 * Math.PI) : 0;
+    const collectTilt = collectAge < 0.2 ? 0.05 * Math.sin(collectAge / 0.2 * Math.PI * 2) : 0;
+
+    ctx.save();
+    ctx.translate(cx, cy + bob + collectBounce);
+
+    // Direction: the PNGs face right, so flip for left; rotate for up/down
+    const DIR_ANGLES = { right: 0, down: Math.PI / 2, left: 0, up: -Math.PI / 2 };
+    const angle = DIR_ANGLES[dir] || 0;
+    const flipX = (dir === 'left') ? -1 : 1;
+
+    ctx.rotate(angle + collectTilt);
+    ctx.scale(flipX * squash, stretch);
+
+    // Keep pixel art crisp
+    ctx.imageSmoothingEnabled = false;
+
+    // Subtle glow/shadow behind sprite
+    ctx.shadowColor = 'rgba(255, 200, 255, 0.35)';
+    ctx.shadowBlur = 8;
+
+    // ---- Draw cape BEHIND unicorn if selected ----
+    const accMeta = ACCESSORIES.find(a => a.id === accessoryId);
+    if (accMeta && accMeta.anchor === 'back') {
+        const accImg = imgCache['acc_' + accessoryId];
+        if (accImg && accImg.complete) {
+            const accScale = size / SPRITE_GAME_SIZE * (size === SPRITE_GAME_SIZE ? ACCESSORY_SCALE_GAME : ACCESSORY_SCALE_PREVIEW);
+            const accSize = Math.max(accImg.width, accImg.height) * accScale;
+            // Cape lag: smooth toward opposite of movement
+            const targetLag = (dir === 'left' || dir === 'up') ? 0.15 : -0.15;
+            capeAngle += (targetLag - capeAngle) * 0.08;
+            ctx.save();
+            ctx.rotate(capeAngle);
+            const cOx = (accMeta.ox || 0) * (size / SPRITE_GAME_SIZE);
+            const cOy = (accMeta.oy || 0) * (size / SPRITE_GAME_SIZE);
+            ctx.drawImage(accImg, cOx - accSize / 2, cOy - accSize / 2, accSize, accSize);
+            ctx.restore();
+        }
+    }
+
+    // ---- Draw unicorn body ----
+    ctx.shadowColor = 'rgba(0,0,0,0)';
+    ctx.shadowBlur = 0;
+    const halfW = size / 2;
+    const halfH = size / 2 * (avatarImg.height / avatarImg.width);
+    ctx.drawImage(avatarImg, -halfW, -halfH, size, size * (avatarImg.height / avatarImg.width));
+
+    // ---- Draw accessories ON TOP ----
+    if (accMeta && accMeta.path && accMeta.anchor !== 'back' && accMeta.anchor !== 'none') {
+        const accImg = imgCache['acc_' + accessoryId];
+        if (accImg && accImg.complete) {
+            const scaleFactor = size / SPRITE_GAME_SIZE;
+            const accScale = scaleFactor * (size === SPRITE_GAME_SIZE ? ACCESSORY_SCALE_GAME : ACCESSORY_SCALE_PREVIEW);
+            const accW = accImg.width * accScale;
+            const accH = accImg.height * accScale;
+            let aox = (accMeta.ox || 0) * scaleFactor;
+            let aoy = (accMeta.oy || 0) * scaleFactor;
+
+            // Position based on anchor type (relative to unicorn center)
+            // Unicorn faces right: head is right side, ~top quarter
+            const headX = size * 0.22;  // head center offset from unicorn center
+            const headY = -size * 0.22;
+
+            if (accMeta.anchor === 'head_top') {
+                aox += headX; aoy += headY - accH * 0.3;
+            } else if (accMeta.anchor === 'eyes') {
+                aox += headX + size * 0.05; aoy += headY + size * 0.08;
+            } else if (accMeta.anchor === 'head_float') {
+                // Halo floats with gentle bob
+                const haloBob = Math.sin(now * 0.003 + 1) * 2;
+                aox += headX; aoy += headY - accH * 0.5 + haloBob;
+            } else if (accMeta.anchor === 'head_wrap') {
+                aox += headX; aoy += headY;
+            } else if (accMeta.anchor === 'back_top') {
+                aox += -size * 0.15; aoy += headY;
+            }
+
+            ctx.drawImage(accImg, aox - accW / 2, aoy - accH / 2, accW, accH);
+        }
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.restore();
+}
+
 function drawUnicorn(unicorn) {
     if (!unicorn.alive) return;
 
+    // Player uses PNG sprite system
+    if (unicorn.isPlayer && imgCache[selectedAvatarId]) {
+        const cx = unicorn.x * GRID_SIZE + GRID_SIZE / 2;
+        const cy = unicorn.y * GRID_SIZE + GRID_SIZE / 2;
+        drawSpriteUnicorn(selectedAvatarId, selectedAccessoryId, cx, cy, unicorn.dir, SPRITE_GAME_SIZE, unicorn.trotPhase);
+        return;
+    }
+
+    // NPCs use the original vector drawing
     const theme = unicorn.theme;
     const scale = unicorn.isPlayer ? PLAYER_SCALE : NPC_SCALE;
     const trot = unicorn.trotPhase || 0;
-    const hatId = unicorn.isPlayer ? selectedHatId : null;
+    const hatId = null;
 
-    // Grid center position (collision point)
     const cx = unicorn.x * GRID_SIZE + GRID_SIZE / 2;
     const cy = unicorn.y * GRID_SIZE + GRID_SIZE / 2;
 
@@ -2927,18 +3119,19 @@ function drawCustomizeScreen(delta) {
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill();
     ctx.save();
     ctx.translate(CANVAS_WIDTH / 2, 130);
-    drawUnicornBody(playerTheme, 2.5, customizePreviewTrot, selectedHatId);
+    // Draw PNG sprite preview instead of vector
+    drawSpriteUnicorn(selectedAvatarId, selectedAccessoryId, 0, 0, 'right', SPRITE_PREVIEW_SIZE, customizePreviewTrot);
     // Also draw companion in preview
     if (selectedCompanionId !== 'none') {
-        drawCompanion(selectedCompanionId, -35, 10, 'right', customizePreviewTrot, 0.5 * 2.5);
+        drawCompanion(selectedCompanionId, -65, 25, 'right', customizePreviewTrot, 0.5 * 2.5);
     }
     ctx.restore();
 
     // ---- Tabs ----
     const tabs = [
-        { id: 'body', label: 'Body' },
+        { id: 'avatar', label: 'Unicorn' },
+        { id: 'accessory', label: 'Accessory' },
         { id: 'mane', label: 'Mane' },
-        { id: 'hats', label: 'Hats' },
         { id: 'companions', label: 'Pals' },
     ];
     const tabW = 130, tabH = 34, tabGap = 8;
@@ -2962,27 +3155,69 @@ function drawCustomizeScreen(delta) {
     // ---- Content area ----
     const contentY = 250;
 
-    if (customizeTab === 'body') {
+    if (customizeTab === 'avatar') {
         ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#FFD700';
-        ctx.fillText('Body Color', CANVAS_WIDTH / 2, contentY);
-        const cs = 40, cg = 8;
-        const totalW = PLAYER_COLORS.length * (cs + cg) - cg;
+        ctx.fillText('Choose Your Unicorn', CANVAS_WIDTH / 2, contentY);
+        const cardW = 90, cardH = 100, cardGap = 12;
+        const totalW = UNICORN_AVATARS.length * (cardW + cardGap) - cardGap;
         const sx = (CANVAS_WIDTH - totalW) / 2;
-        for (let i = 0; i < PLAYER_COLORS.length; i++) {
-            const bx = sx + i * (cs + cg), by = contentY + 16;
-            customBtns.push({ x: bx, y: by, w: cs, h: cs, action: 'color', index: i });
-            roundRect(ctx, bx - 2, by - 2, cs + 4, cs + 4, 7);
-            ctx.fillStyle = i === selectedColorIndex ? '#FFD700' : 'rgba(255,255,255,0.08)'; ctx.fill();
-            roundRect(ctx, bx, by, cs, cs, 5);
-            ctx.fillStyle = PLAYER_COLORS[i].body; ctx.fill();
-            ctx.strokeStyle = PLAYER_COLORS[i].border; ctx.lineWidth = 1.5; ctx.stroke();
-            ctx.font = '9px sans-serif'; ctx.fillStyle = '#BBB';
-            ctx.fillText(PLAYER_COLORS[i].label, bx + cs / 2, by + cs + 11);
+        for (let i = 0; i < UNICORN_AVATARS.length; i++) {
+            const av = UNICORN_AVATARS[i];
+            const bx = sx + i * (cardW + cardGap), by = contentY + 20;
+            const isSel = selectedAvatarId === av.id;
+            customBtns.push({ x: bx, y: by, w: cardW, h: cardH, action: 'avatar', avatarId: av.id });
+            roundRect(ctx, bx, by, cardW, cardH, 8);
+            ctx.fillStyle = isSel ? 'rgba(255, 215, 0, 0.25)' : 'rgba(0,0,0,0.3)'; ctx.fill();
+            if (isSel) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2.5; ctx.stroke(); }
+            // Draw avatar preview
+            const img = imgCache[av.id];
+            if (img && img.complete) {
+                ctx.imageSmoothingEnabled = false;
+                const previewSz = 60;
+                const aspect = img.height / img.width;
+                ctx.drawImage(img, bx + (cardW - previewSz) / 2, by + 8, previewSz, previewSz * aspect);
+                ctx.imageSmoothingEnabled = true;
+            }
+            ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = isSel ? '#FFD700' : '#CCC';
+            ctx.fillText(av.label, bx + cardW / 2, by + cardH - 8);
         }
 
-        // Rounds played info
         ctx.font = '14px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.fillText(`Rounds played: ${roundsPlayed}`, CANVAS_WIDTH / 2, contentY + 90);
+        ctx.fillText(`Rounds played: ${roundsPlayed}`, CANVAS_WIDTH / 2, contentY + 140);
+
+    } else if (customizeTab === 'accessory') {
+        ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#FFD700';
+        ctx.fillText('Choose an Accessory', CANVAS_WIDTH / 2, contentY);
+        const accW = 80, accH = 80, accGap = 10;
+        const accsPerRow = 8;
+        const accTotalW = Math.min(ACCESSORIES.length, accsPerRow) * (accW + accGap) - accGap;
+        const accSx = (CANVAS_WIDTH - accTotalW) / 2;
+        for (let i = 0; i < ACCESSORIES.length; i++) {
+            const acc = ACCESSORIES[i];
+            const row = Math.floor(i / accsPerRow), col = i % accsPerRow;
+            const bx = accSx + col * (accW + accGap);
+            const by = contentY + 20 + row * (accH + accGap + 8);
+            const isSel = selectedAccessoryId === acc.id;
+            customBtns.push({ x: bx, y: by, w: accW, h: accH, action: 'accessory', accessoryId: acc.id });
+            roundRect(ctx, bx, by, accW, accH, 8);
+            ctx.fillStyle = isSel ? 'rgba(255, 215, 0, 0.25)' : 'rgba(0,0,0,0.3)'; ctx.fill();
+            if (isSel) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.stroke(); }
+            if (acc.path) {
+                const img = imgCache['acc_' + acc.id];
+                if (img && img.complete) {
+                    ctx.imageSmoothingEnabled = false;
+                    const ps = 44;
+                    const aspect = img.height / img.width;
+                    ctx.drawImage(img, bx + (accW - ps) / 2, by + 6, ps, ps * aspect);
+                    ctx.imageSmoothingEnabled = true;
+                }
+            } else {
+                ctx.font = '20px sans-serif'; ctx.fillStyle = '#888';
+                ctx.fillText('--', bx + accW / 2, by + 32);
+            }
+            ctx.font = '9px sans-serif'; ctx.fillStyle = isSel ? '#FFD700' : '#AAA'; ctx.textBaseline = 'bottom';
+            ctx.fillText(acc.label, bx + accW / 2, by + accH - 3); ctx.textBaseline = 'middle';
+        }
 
     } else if (customizeTab === 'mane') {
         // Strand selector
@@ -3038,51 +3273,6 @@ function drawCustomizeScreen(delta) {
             ctx.font = isSel ? 'bold 14px sans-serif' : '14px sans-serif';
             ctx.fillStyle = isSel ? '#FFF' : '#BBB';
             ctx.fillText(HAIRSTYLES[i].label, bx + hsW / 2, by + hsH / 2);
-        }
-
-    } else if (customizeTab === 'hats') {
-        const hatW = 115, hatH = 85, hatGap = 10;
-        const hatsPerRow = 5;
-        const totalHatRowW = Math.min(HATS.length, hatsPerRow) * (hatW + hatGap) - hatGap;
-        const hatStartX = (CANVAS_WIDTH - totalHatRowW) / 2;
-
-        for (let i = 0; i < HATS.length; i++) {
-            const row = Math.floor(i / hatsPerRow), col = i % hatsPerRow;
-            const bx = hatStartX + col * (hatW + hatGap);
-            const by = contentY + row * (hatH + hatGap + 14);
-            const hat = HATS[i];
-            const unlocked = isHatUnlocked(hat);
-            const isSel = hat.id === selectedHatId;
-            customBtns.push({ x: bx, y: by, w: hatW, h: hatH, action: 'hat', hatId: hat.id });
-
-            roundRect(ctx, bx, by, hatW, hatH, 8);
-            ctx.fillStyle = isSel ? 'rgba(255, 215, 0, 0.25)' : 'rgba(0, 0, 0, 0.3)'; ctx.fill();
-            if (isSel) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.stroke(); }
-            ctx.fillStyle = RARITY_COLORS[hat.rarity];
-            roundRect(ctx, bx, by, hatW, 3, [3, 3, 0, 0]); ctx.fill();
-
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            if (unlocked) {
-                if (hat.id !== 'none') {
-                    ctx.save(); ctx.translate(bx + hatW / 2, by + 35);
-                    drawHat(hat.id, 0, 0, 10, 2.0, customizePreviewTrot);
-                    ctx.restore();
-                } else {
-                    ctx.font = '20px sans-serif'; ctx.fillStyle = '#888';
-                    ctx.fillText('--', bx + hatW / 2, by + 35);
-                }
-                ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#FFF'; ctx.textBaseline = 'bottom';
-                ctx.fillText(hat.label, bx + hatW / 2, by + hatH - 5);
-                if (isSel) { ctx.fillStyle = '#FFD700'; ctx.fillText('EQUIPPED', bx + hatW / 2, by + hatH - 17); }
-            } else {
-                ctx.fillStyle = 'rgba(0,0,0,0.5)'; roundRect(ctx, bx, by, hatW, hatH, 8); ctx.fill();
-                ctx.font = '18px sans-serif'; ctx.fillStyle = '#888'; ctx.textBaseline = 'middle';
-                ctx.fillText('\uD83D\uDD12', bx + hatW / 2, by + 32);
-                ctx.font = '10px sans-serif'; ctx.fillStyle = RARITY_COLORS[hat.rarity];
-                ctx.fillText(`${hat.unlockRounds} rounds`, bx + hatW / 2, by + 50);
-                ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#AAA'; ctx.textBaseline = 'bottom';
-                ctx.fillText(hat.label, bx + hatW / 2, by + hatH - 5);
-            }
         }
 
     } else if (customizeTab === 'companions') {
