@@ -76,9 +76,9 @@ loadAllImages();
 
 // Sprite rendering sizes (pixels) — unicorn PNGs are ~120x110
 const SPRITE_GAME_SIZE = 42;         // unicorn drawn size during gameplay
-const SPRITE_PREVIEW_SIZE = 160;     // unicorn drawn size in customize preview
-const ACCESSORY_SCALE_GAME = 0.30;   // accessory scale relative to unicorn in-game
-const ACCESSORY_SCALE_PREVIEW = 0.65; // accessory scale in preview
+const SPRITE_PREVIEW_SIZE = 100;     // unicorn drawn size in customize preview
+const ACCESSORY_SCALE_GAME = 0.25;   // accessory scale relative to unicorn in-game
+const ACCESSORY_SCALE_PREVIEW = 0.35; // accessory scale in preview
 const SPRITE_HITBOX_RATIO = 0.6;     // hitbox is smaller than visual
 
 // Animation state
