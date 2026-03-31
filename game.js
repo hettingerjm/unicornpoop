@@ -58,15 +58,15 @@ const RARITY_COLORS = {
 };
 
 const HATS = [
-    { id: 'none',       label: 'None',         rarity: 'common',    unlockRounds: 0  },
-    { id: 'party',      label: 'Party Hat',     rarity: 'common',    unlockRounds: 3  },
-    { id: 'crown',      label: 'Crown',         rarity: 'common',    unlockRounds: 0  },
-    { id: 'cowboy',     label: 'Cowboy Hat',     rarity: 'rare',      unlockRounds: 8  },
-    { id: 'wizard',     label: 'Wizard Hat',     rarity: 'rare',      unlockRounds: 15 },
-    { id: 'tophat',     label: 'Top Hat',        rarity: 'epic',      unlockRounds: 25 },
-    { id: 'sunglasses', label: 'Sunglasses',     rarity: 'epic',      unlockRounds: 35 },
-    { id: 'halo',       label: 'Halo',           rarity: 'legendary', unlockRounds: 50 },
-    { id: 'rainbow',    label: 'Rainbow Crown',  rarity: 'legendary', unlockRounds: 75 },
+    { id: 'none',       label: 'None',         rarity: 'common',    unlockRounds: 0,  buff: null, buffDesc: '' },
+    { id: 'party',      label: 'Party Hat',     rarity: 'common',    unlockRounds: 3,  buff: null, buffDesc: 'Just for fun!' },
+    { id: 'crown',      label: 'Crown',         rarity: 'common',    unlockRounds: 0,  buff: { scoreMult: 0.10 }, buffDesc: '+10% score' },
+    { id: 'cowboy',     label: 'Cowboy Hat',     rarity: 'rare',      unlockRounds: 8,  buff: { freeHit: true }, buffDesc: '1 free collision' },
+    { id: 'wizard',     label: 'Wizard Hat',     rarity: 'rare',      unlockRounds: 15, buff: { speedResist: 0.15 }, buffDesc: 'Slower speed scaling' },
+    { id: 'tophat',     label: 'Top Hat',        rarity: 'epic',      unlockRounds: 25, buff: { poopValue: 0.15 }, buffDesc: '+15% pickup value' },
+    { id: 'sunglasses', label: 'Sunglasses',     rarity: 'epic',      unlockRounds: 35, buff: { graceMs: 150 }, buffDesc: 'Turn grace window' },
+    { id: 'halo',       label: 'Halo',           rarity: 'legendary', unlockRounds: 50, buff: { scoreMult: 0.15 }, buffDesc: '+15% score' },
+    { id: 'rainbow',    label: 'Rainbow Crown',  rarity: 'legendary', unlockRounds: 75, buff: { scoreMult: 0.10, speedBonus: 0.10 }, buffDesc: '+10% score & speed' },
 ];
 
 // ---- PROGRESSIVE DIFFICULTY (wave system) ----
@@ -102,6 +102,11 @@ const HAIRSTYLES = [
 ];
 
 // ---- COMPANIONS ----
+const COMPANION_FOLLOW_DELAY = 8;        // grid steps behind player in history
+const COMPANION_OFFSET_PX = 12;          // perpendicular offset in pixels
+const COMPANION_LERP_SPEED = 0.18;       // interpolation smoothing (0-1)
+const COMPANION_SCORE_BONUS = 0.05;      // +5% score multiplier per companion
+
 const COMPANIONS = [
     { id: 'none',      label: 'None',        type: 'none'  },
     { id: 'pony_pink', label: 'Pink Pony',   type: 'pony', bodyColor: '#FFB6D9', maneColor: '#FF69B4' },
@@ -112,6 +117,99 @@ const COMPANIONS = [
     { id: 'dog_brown',  label: 'Brown Dog',  type: 'dog',  bodyColor: '#A1887F', earColor: '#5D4037' },
     { id: 'dog_golden', label: 'Golden Dog',  type: 'dog',  bodyColor: '#FFD54F', earColor: '#F9A825' },
 ];
+
+// Dog unlock thresholds (rounds played)
+const DOG_UNLOCK_THRESHOLDS = [
+    { rounds: 3,  count: 1, label: 'Dog Unlocked!' },
+    { rounds: 6,  count: 2, label: 'Second Dog!' },
+    { rounds: 10, count: 3, label: 'Dog Pack!' },
+];
+
+function getUnlockedDogCount() {
+    let count = 0;
+    for (const t of DOG_UNLOCK_THRESHOLDS) {
+        if (roundsPlayed >= t.rounds) count = t.count;
+    }
+    return count;
+}
+
+// ---- SCORING SYSTEM ----
+const SCORE_PER_SECOND = 10;             // base score per second survived
+const SCORE_PER_KILL = 500;              // score for eliminating an NPC
+const MULTIPLIER_GROWTH_INTERVAL = 5000; // ms between multiplier ticks
+const MULTIPLIER_INCREMENT = 0.5;        // multiplier increase per tick
+const MAX_MULTIPLIER = 10;
+
+// ---- COLLECTIBLES ----
+const COLLECTIBLE_SPAWN_INTERVAL = 4000; // ms between spawns
+const COLLECTIBLE_TYPES = [
+    { id: 'star',    label: 'Star',     score: 200,  color: '#FFD700', symbol: '\u2605', multiplierBoost: 0.5 },
+    { id: 'gem',     label: 'Gem',      score: 500,  color: '#C77DFF', symbol: '\u25C6', multiplierBoost: 1.0 },
+    { id: 'heart',   label: 'Heart',    score: 100,  color: '#FF69B4', symbol: '\u2665', multiplierBoost: 0.25 },
+];
+
+// ---- POWER-UP SYSTEM ----
+const POWERUP_SPAWN_INTERVAL = 12000;    // ms between power-up spawns
+const POWERUP_TYPES = [
+    { id: 'speed',   label: 'Speed Boost', duration: 4000, color: '#00E5FF', symbol: '\u26A1' },
+    { id: 'ghost',   label: 'Ghost Mode',  duration: 3000, color: '#E0E0FF', symbol: '\uD83D\uDC7B' },
+    { id: 'cleanse', label: 'Cleanse',     duration: 0,    color: '#66BB6A', symbol: '\u2728' },
+];
+const CLEANSE_RADIUS = 5;                // grid cells cleared around player
+
+// ---- BOSS SYSTEM ----
+const BOSS_WAVE_INTERVAL = 5;            // boss every N waves
+const BOSS_TYPES = [
+    { id: 'charger',    label: 'The Charger',     health: 5, speed: 0.7, color: '#FF1744', bodyColor: '#8B0000',
+      border: '#FF5252', hornGradient: ['#FF1744','#D50000','#B71C1C'], maneColors: ['#FF5252','#FF1744','#D50000'],
+      tailColors: ['#FF5252','#FF1744'], eyeColor: '#FFEB3B', belly: '#FF8A80', hoofColor: '#D50000' },
+    { id: 'phantom',    label: 'The Phantom',      health: 4, speed: 1.0, color: '#7C4DFF', bodyColor: '#311B92',
+      border: '#B388FF', hornGradient: ['#7C4DFF','#651FFF','#6200EA'], maneColors: ['#B388FF','#7C4DFF','#651FFF'],
+      tailColors: ['#B388FF','#7C4DFF'], eyeColor: '#FF4081', belly: '#9575CD', hoofColor: '#651FFF' },
+];
+
+// ---- NPC PERSONALITY TYPES ----
+const NPC_PERSONALITIES = [
+    { id: 'normal',     label: 'Normal',    aggressiveness: 0, mistakeMod: 1.0, lookaheadMod: 1.0 },
+    { id: 'aggressive', label: 'Aggressive', aggressiveness: 0.4, mistakeMod: 1.2, lookaheadMod: 0.8 },
+    { id: 'defensive',  label: 'Defensive',  aggressiveness: -0.3, mistakeMod: 0.5, lookaheadMod: 1.5 },
+    { id: 'chaotic',    label: 'Chaotic',    aggressiveness: 0.1, mistakeMod: 3.0, lookaheadMod: 0.6 },
+];
+
+// ---- XP / LEVEL SYSTEM ----
+const XP_PER_SECOND = 1;
+const XP_PER_KILL = 50;
+const XP_PER_WIN = 200;
+const XP_LEVEL_BASE = 100;              // XP needed for level 1
+const XP_LEVEL_SCALE = 1.4;             // each level requires more
+const MAX_LEVEL = 50;
+
+// ---- GAME MODES ----
+const GAME_MODES = [
+    { id: 'classic',     label: 'Classic',      desc: 'Normal waves',         speedMod: 1.0, timeLimitMs: 0 },
+    { id: 'speed',       label: 'Speed',        desc: 'Everything faster!',   speedMod: 0.65, timeLimitMs: 0 },
+    { id: 'chill',       label: 'Chill',        desc: 'Relax and survive',    speedMod: 1.4, timeLimitMs: 0 },
+    { id: 'bossrush',    label: 'Boss Rush',    desc: 'Only bosses!',         speedMod: 1.0, timeLimitMs: 0 },
+    { id: 'scoreattack', label: 'Score Attack', desc: '60 second sprint',     speedMod: 1.0, timeLimitMs: 60000 },
+];
+
+// ---- ACHIEVEMENTS ----
+const ACHIEVEMENTS = [
+    { id: 'first_win',     label: 'First Victory',     desc: 'Win your first game', icon: '\uD83C\uDFC6' },
+    { id: 'wave5',         label: 'Wave Rider',         desc: 'Reach wave 5',        icon: '\uD83C\uDF0A' },
+    { id: 'wave10',        label: 'Unstoppable',        desc: 'Reach wave 10',       icon: '\uD83D\uDD25' },
+    { id: 'kill10',        label: 'Unicorn Hunter',     desc: 'Defeat 10 unicorns',  icon: '\u2694\uFE0F' },
+    { id: 'score5000',     label: 'High Scorer',        desc: 'Score 5000+ in a run', icon: '\u2B50' },
+    { id: 'score25000',    label: 'Score Legend',        desc: 'Score 25000+',         icon: '\uD83D\uDCAB' },
+    { id: 'boss_kill',     label: 'Boss Slayer',        desc: 'Defeat a boss',        icon: '\uD83D\uDC09' },
+    { id: 'collect20',     label: 'Collector',          desc: 'Collect 20 items',      icon: '\uD83D\uDC8E' },
+    { id: 'survive60',     label: 'Survivor',           desc: 'Survive 60 seconds',   icon: '\u23F1\uFE0F' },
+    { id: 'all_modes',     label: 'Mode Master',        desc: 'Win in every mode',    icon: '\uD83C\uDFAE' },
+];
+
+// ---- SCREEN SHAKE ----
+const SHAKE_INTENSITY = 6;
+const SHAKE_DURATION = 300;              // ms
 
 // ---- CONSTANTS (derived) ----
 const COLS = CANVAS_WIDTH / GRID_SIZE;   // 80
@@ -124,6 +222,8 @@ const PAUSED = 'PAUSED';
 const GAME_OVER = 'GAME_OVER';
 const WIN = 'WIN';
 const CUSTOMIZE = 'CUSTOMIZE';
+const MODE_SELECT = 'MODE_SELECT';
+const RUN_SUMMARY = 'RUN_SUMMARY';
 
 const DIR_DELTA = {
     up:    { dx:  0, dy: -1 },
@@ -222,6 +322,59 @@ let selectedManeColors = ['#FF69B4', '#C77DFF', '#7B68EE', '#4FC3F7', '#66BB6A',
 let customizeTab = 'body';  // 'body' | 'mane' | 'hats' | 'companions'
 let maneEditStrand = 0;     // which strand index is selected for color editing
 
+// ---- SCORING STATE ----
+let score = 0;
+let scoreMultiplier = 1.0;
+let multiplierTimer = 0;
+let runKills = 0;
+let runCollectibles = 0;
+
+// ---- COLLECTIBLE STATE ----
+let collectibles = [];      // [{x, y, type, spawnTime}]
+let collectibleTimer = 0;
+let collectParticles = [];  // sparkle particles when collected
+
+// ---- POWER-UP STATE ----
+let powerups = [];           // on-grid items [{x, y, type, spawnTime}]
+let powerupTimer = 0;
+let activePowerup = null;    // {type, remaining}
+let powerupFlashTimer = 0;
+
+// ---- BOSS STATE ----
+let isBossWave = false;
+let boss = null;             // special unicorn object with .health, .maxHealth, .bossType
+let bossHitFlash = 0;
+
+// ---- GAME MODE STATE ----
+let selectedGameMode = 'classic';
+let scoreAttackTimer = 0;
+
+// ---- XP / LEVEL STATE ----
+let playerXP = 0;
+let playerLevel = 1;
+let totalKills = 0;
+let modesWon = [];          // mode ids won at least once
+
+// ---- ACHIEVEMENTS STATE ----
+let unlockedAchievements = [];
+let achievementPopup = null; // {achievement, timer}
+
+// ---- SCREEN SHAKE STATE ----
+let shakeTimer = 0;
+let shakeIntensity = 0;
+
+// ---- COMPANION FOLLOWING STATE ----
+let playerPosHistory = [];    // array of {px, py, dir} in pixel coords
+let companionVisuals = [];    // [{x, y, dir}] smoothed positions for each dog
+let freeHitUsed = false;      // for cowboy hat one-free-collision
+let unlockPopup = null;       // {text, timer}
+
+// ---- INSTRUCTIONS STATE ----
+const INSTRUCTIONS = 'INSTRUCTIONS';
+
+// ---- RUN SUMMARY STATE ----
+let lastRunStats = null;     // {score, time, kills, wave, collectibles, xpEarned}
+
 // Load saved customization from localStorage
 function loadSaveData() {
     try {
@@ -235,6 +388,12 @@ function loadSaveData() {
             if (Array.isArray(data.maneColors) && data.maneColors.length >= MANE_STRANDS) {
                 selectedManeColors = data.maneColors;
             }
+            if (typeof data.xp === 'number') playerXP = data.xp;
+            if (typeof data.level === 'number') playerLevel = data.level;
+            if (typeof data.totalKills === 'number') totalKills = data.totalKills;
+            if (Array.isArray(data.achievements)) unlockedAchievements = data.achievements;
+            if (Array.isArray(data.modesWon)) modesWon = data.modesWon;
+            if (typeof data.gameMode === 'string') selectedGameMode = data.gameMode;
         }
     } catch (e) {}
     applyPlayerColor();
@@ -250,6 +409,12 @@ function saveSaveData() {
             companionId: selectedCompanionId,
             hairstyle: selectedHairstyle,
             maneColors: selectedManeColors,
+            xp: playerXP,
+            level: playerLevel,
+            totalKills: totalKills,
+            achievements: unlockedAchievements,
+            modesWon: modesWon,
+            gameMode: selectedGameMode,
         }));
     } catch (e) {}
 }
@@ -286,6 +451,20 @@ function applyPlayerColor() {
 
 function isHatUnlocked(hat) {
     return roundsPlayed >= hat.unlockRounds;
+}
+
+function getHatBuff() {
+    const hat = HATS.find(h => h.id === selectedHatId);
+    return (hat && hat.buff) || {};
+}
+
+function getCompanionScoreBonus() {
+    if (!selectedCompanionId || selectedCompanionId === 'none') return 0;
+    const comp = COMPANIONS.find(c => c.id === selectedCompanionId);
+    if (!comp || comp.type === 'none') return 0;
+    const dogCount = (comp.type === 'dog') ? Math.min(getUnlockedDogCount(), 1) : 0;
+    // Each active companion gives a bonus; dogs give extra per unlocked dog
+    return COMPANION_SCORE_BONUS * (dogCount > 0 ? getUnlockedDogCount() : 1);
 }
 
 // ---- MOBILE / TOUCH STATE ----
@@ -396,6 +575,35 @@ function playSound(type) {
             gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
             osc.start(t); osc.stop(t + 0.2);
         });
+    } else if (type === 'collect') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.type = 'sine'; osc.frequency.setValueAtTime(800, now); osc.frequency.setValueAtTime(1200, now + 0.05);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+        osc.start(now); osc.stop(now + 0.15);
+    } else if (type === 'powerup') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.3);
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+        osc.start(now); osc.stop(now + 0.4);
+    } else if (type === 'boss_hit') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.setValueAtTime(100, now + 0.05);
+        osc.frequency.setValueAtTime(150, now + 0.1);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.start(now); osc.stop(now + 0.2);
     } else if (type === 'unlock') {
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
@@ -437,35 +645,67 @@ function createUnicorn(id, x, y, direction, isPlayer, hueStart, theme) {
         theme,
         trailCleared: false,
         trotPhase: Math.random() * Math.PI * 2,
+        personality: isPlayer ? null : NPC_PERSONALITIES[Math.floor(Math.random() * NPC_PERSONALITIES.length)],
+        isBoss: false,
     };
 }
 
 function spawnUnicorns() {
     unicorns = [];
+    collectibles = [];
+    powerups = [];
+    activePowerup = null;
+    boss = null;
+    score = 0;
+    scoreMultiplier = 1.0;
+    multiplierTimer = 0;
+    collectibleTimer = 0;
+    powerupTimer = 0;
+    runKills = 0;
+    runCollectibles = 0;
+    bossHitFlash = 0;
+    scoreAttackTimer = 0;
+    shakeTimer = 0;
+    playerPosHistory = [];
+    companionVisuals = [];
+    freeHitUsed = false;
+
     applyPlayerColor();
     applyManeColors();
     applyWave();
+
+    // Apply game mode speed modifier
+    const mode = GAME_MODES.find(m => m.id === selectedGameMode) || GAME_MODES[0];
+    waveMoveInterval = Math.round(waveMoveInterval * mode.speedMod);
 
     const px = Math.floor(COLS * 0.15);
     const py = Math.floor(ROWS * 0.25);
     player = createUnicorn('player', px, py, 'right', true, 0, playerTheme);
     unicorns.push(player);
 
-    const spawnPoints = [
-        { x: Math.floor(COLS * 0.85), y: Math.floor(ROWS * 0.25), dir: 'left' },
-        { x: Math.floor(COLS * 0.15), y: Math.floor(ROWS * 0.75), dir: 'right' },
-        { x: Math.floor(COLS * 0.85), y: Math.floor(ROWS * 0.75), dir: 'left' },
-        { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.50), dir: 'up' },
-        { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.15), dir: 'down' },
-        { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.85), dir: 'up' },
-    ];
+    // Determine if this is a boss wave
+    isBossWave = (selectedGameMode === 'bossrush') ||
+                 ((currentWave + 1) % BOSS_WAVE_INTERVAL === 0 && currentWave > 0);
 
-    const npcCount = waveNpcCount;
-    for (let i = 0; i < npcCount && i < spawnPoints.length; i++) {
-        const sp = spawnPoints[i];
-        const hueStart = (i + 1) * 70;
-        const npc = createUnicorn(`npc${i}`, sp.x, sp.y, sp.dir, false, hueStart, NPC_THEMES[i % NPC_THEMES.length]);
-        unicorns.push(npc);
+    if (isBossWave) {
+        spawnBoss();
+    } else {
+        const spawnPoints = [
+            { x: Math.floor(COLS * 0.85), y: Math.floor(ROWS * 0.25), dir: 'left' },
+            { x: Math.floor(COLS * 0.15), y: Math.floor(ROWS * 0.75), dir: 'right' },
+            { x: Math.floor(COLS * 0.85), y: Math.floor(ROWS * 0.75), dir: 'left' },
+            { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.50), dir: 'up' },
+            { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.15), dir: 'down' },
+            { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.85), dir: 'up' },
+        ];
+
+        const npcCount = waveNpcCount;
+        for (let i = 0; i < npcCount && i < spawnPoints.length; i++) {
+            const sp = spawnPoints[i];
+            const hueStart = (i + 1) * 70;
+            const npc = createUnicorn(`npc${i}`, sp.x, sp.y, sp.dir, false, hueStart, NPC_THEMES[i % NPC_THEMES.length]);
+            unicorns.push(npc);
+        }
     }
 }
 
@@ -480,6 +720,17 @@ document.addEventListener('keydown', (e) => {
         case TITLE:
             if (e.key === 'Enter' || e.key === ' ') startCountdown();
             if (e.key === 'c' || e.key === 'C') { gameState = CUSTOMIZE; customizePreviewTrot = 0; }
+            if (e.key === 'g' || e.key === 'G') { gameState = MODE_SELECT; }
+            if (e.key === 'h' || e.key === 'H' || e.key === '?') { gameState = INSTRUCTIONS; }
+            break;
+        case INSTRUCTIONS:
+            if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ' || e.key === 'Backspace') gameState = TITLE;
+            break;
+        case MODE_SELECT:
+            if (e.key === 'Escape' || e.key === 'Backspace') gameState = TITLE;
+            for (let mi = 0; mi < GAME_MODES.length; mi++) {
+                if (e.key === String(mi + 1)) { selectedGameMode = GAME_MODES[mi].id; saveSaveData(); gameState = TITLE; }
+            }
             break;
         case CUSTOMIZE:
             if (e.key === 'Escape' || e.key === 'Backspace') gameState = TITLE;
@@ -493,7 +744,11 @@ document.addEventListener('keydown', (e) => {
             break;
         case GAME_OVER:
         case WIN:
-            if (e.key === 'Enter' || e.key === ' ') resetToTitle();
+            if (e.key === 'Enter' || e.key === ' ') { gameState = RUN_SUMMARY; }
+            if (e.key === 'r' || e.key === 'R') startCountdown();
+            break;
+        case RUN_SUMMARY:
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') resetToTitle();
             if (e.key === 'r' || e.key === 'R') startCountdown();
             break;
     }
@@ -622,7 +877,19 @@ canvas.addEventListener('touchstart', (e) => {
         return;
     }
     if (gameState === GAME_OVER || gameState === WIN) {
-        startCountdown();
+        gameState = RUN_SUMMARY;
+        return;
+    }
+    if (gameState === RUN_SUMMARY) {
+        resetToTitle();
+        return;
+    }
+    if (gameState === MODE_SELECT) {
+        handleModeSelectTouch(pos.x, pos.y);
+        return;
+    }
+    if (gameState === INSTRUCTIONS) {
+        gameState = TITLE;
         return;
     }
 }, { passive: false });
@@ -660,6 +927,8 @@ canvas.addEventListener('click', (e) => {
         handleTitleTouch(pos.x, pos.y);
     } else if (gameState === CUSTOMIZE) {
         handleCustomizeTouch(pos.x, pos.y);
+    } else if (gameState === MODE_SELECT) {
+        handleModeSelectTouch(pos.x, pos.y);
     }
 });
 
@@ -732,22 +1001,15 @@ setTimeout(resizeCanvas, 1000);
 // ---- TITLE SCREEN TOUCH/CLICK HANDLING ----
 // Button hit areas (set during draw)
 let titleStartBtn = { x: 0, y: 0, w: 0, h: 0 };
+let titleModeBtn = { x: 0, y: 0, w: 0, h: 0 };
 let titleCustomBtn = { x: 0, y: 0, w: 0, h: 0 };
+let titleHelpBtn = { x: 0, y: 0, w: 0, h: 0 };
 
 function handleTitleTouch(cx, cy) {
-    // Start button
-    if (cx >= titleStartBtn.x && cx <= titleStartBtn.x + titleStartBtn.w &&
-        cy >= titleStartBtn.y && cy <= titleStartBtn.y + titleStartBtn.h) {
-        startCountdown();
-        return;
-    }
-    // Customize button
-    if (cx >= titleCustomBtn.x && cx <= titleCustomBtn.x + titleCustomBtn.w &&
-        cy >= titleCustomBtn.y && cy <= titleCustomBtn.y + titleCustomBtn.h) {
-        gameState = CUSTOMIZE;
-        customizePreviewTrot = 0;
-        return;
-    }
+    if (hitTest(cx, cy, titleStartBtn)) { startCountdown(); return; }
+    if (hitTest(cx, cy, titleModeBtn)) { gameState = MODE_SELECT; return; }
+    if (hitTest(cx, cy, titleCustomBtn)) { gameState = CUSTOMIZE; customizePreviewTrot = 0; return; }
+    if (hitTest(cx, cy, titleHelpBtn)) { gameState = INSTRUCTIONS; return; }
 }
 
 // ---- CUSTOMIZE SCREEN TOUCH/CLICK HANDLING ----
@@ -787,6 +1049,362 @@ function handleCustomizeTouch(cx, cy) {
     }
 }
 
+// ---- COLLECTIBLE SYSTEM ----
+function spawnCollectible() {
+    if (collectibles.length >= 3) return;
+    const type = COLLECTIBLE_TYPES[Math.floor(Math.random() * COLLECTIBLE_TYPES.length)];
+    for (let attempt = 0; attempt < 50; attempt++) {
+        const x = randomInt(2, COLS - 3);
+        const y = randomInt(2, ROWS - 3);
+        if (occupiedGrid[x][y] === null) {
+            collectibles.push({ x, y, type, spawnTime: performance.now() });
+            return;
+        }
+    }
+}
+
+function checkCollectiblePickup() {
+    if (!player || !player.alive) return;
+    for (let i = collectibles.length - 1; i >= 0; i--) {
+        const c = collectibles[i];
+        if (c.x === player.x && c.y === player.y) {
+            const poopMult = 1 + (getHatBuff().poopValue || 0);
+            score += Math.floor(c.type.score * scoreMultiplier * poopMult);
+            scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + c.type.multiplierBoost);
+            runCollectibles++;
+            playSound('collect');
+            // Sparkle particles
+            const px = c.x * GRID_SIZE + GRID_SIZE / 2;
+            const py = c.y * GRID_SIZE + GRID_SIZE / 2;
+            for (let j = 0; j < 8; j++) {
+                const a = (Math.PI * 2 * j) / 8;
+                collectParticles.push({ x: px, y: py, vx: Math.cos(a) * 2, vy: Math.sin(a) * 2, life: 1, color: c.type.color, size: 3 });
+            }
+            collectibles.splice(i, 1);
+        }
+    }
+}
+
+function drawCollectibles() {
+    const now = performance.now();
+    for (const c of collectibles) {
+        const cx = c.x * GRID_SIZE + GRID_SIZE / 2;
+        const cy = c.y * GRID_SIZE + GRID_SIZE / 2;
+        const pulse = 0.8 + 0.2 * Math.sin(now * 0.005 + c.x);
+        const bob = Math.sin(now * 0.003 + c.y) * 2;
+        ctx.save();
+        ctx.translate(cx, cy + bob);
+        ctx.scale(pulse, pulse);
+        // Glow
+        ctx.beginPath();
+        ctx.arc(0, 0, GRID_SIZE * 0.7, 0, Math.PI * 2);
+        ctx.fillStyle = c.type.color.replace(')', ', 0.2)').replace('rgb', 'rgba') || `rgba(255,215,0,0.2)`;
+        const r = parseInt(c.type.color.slice(1,3),16), g = parseInt(c.type.color.slice(3,5),16), b = parseInt(c.type.color.slice(5,7),16);
+        ctx.fillStyle = `rgba(${r},${g},${b},0.2)`;
+        ctx.fill();
+        // Symbol
+        ctx.font = `bold ${GRID_SIZE}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = c.type.color;
+        ctx.fillText(c.type.symbol, 0, 0);
+        ctx.restore();
+    }
+}
+
+// ---- POWER-UP SYSTEM ----
+function spawnPowerup() {
+    if (powerups.length >= 1) return;
+    const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+    for (let attempt = 0; attempt < 50; attempt++) {
+        const x = randomInt(3, COLS - 4);
+        const y = randomInt(3, ROWS - 4);
+        if (occupiedGrid[x][y] === null) {
+            powerups.push({ x, y, type, spawnTime: performance.now() });
+            return;
+        }
+    }
+}
+
+function checkPowerupPickup() {
+    if (!player || !player.alive) return;
+    for (let i = powerups.length - 1; i >= 0; i--) {
+        const p = powerups[i];
+        if (p.x === player.x && p.y === player.y) {
+            playSound('powerup');
+            if (p.type.id === 'cleanse') {
+                // Immediately clear trails in a radius around player
+                for (let dx = -CLEANSE_RADIUS; dx <= CLEANSE_RADIUS; dx++) {
+                    for (let dy = -CLEANSE_RADIUS; dy <= CLEANSE_RADIUS; dy++) {
+                        const cx = player.x + dx, cy = player.y + dy;
+                        if (!isOutOfBounds(cx, cy) && occupiedGrid[cx][cy] !== null && occupiedGrid[cx][cy] !== 'player') {
+                            occupiedGrid[cx][cy] = null;
+                            // Remove from unicorn trail arrays
+                            for (const u of unicorns) {
+                                u.trail = u.trail.filter(s => !(s.x === cx && s.y === cy));
+                            }
+                        }
+                    }
+                }
+                // Cleanse particles
+                for (let j = 0; j < 12; j++) {
+                    const a = (Math.PI * 2 * j) / 12;
+                    collectParticles.push({ x: player.x * GRID_SIZE + 8, y: player.y * GRID_SIZE + 8,
+                        vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, life: 1, color: '#66BB6A', size: 4 });
+                }
+            } else {
+                activePowerup = { type: p.type, remaining: p.type.duration };
+            }
+            powerups.splice(i, 1);
+        }
+    }
+}
+
+function updatePowerup(delta) {
+    if (activePowerup) {
+        activePowerup.remaining -= delta;
+        powerupFlashTimer += delta;
+        if (activePowerup.remaining <= 0) {
+            activePowerup = null;
+            powerupFlashTimer = 0;
+        }
+    }
+}
+
+function drawPowerups() {
+    const now = performance.now();
+    for (const p of powerups) {
+        const cx = p.x * GRID_SIZE + GRID_SIZE / 2;
+        const cy = p.y * GRID_SIZE + GRID_SIZE / 2;
+        const pulse = 0.9 + 0.1 * Math.sin(now * 0.006);
+        const bob = Math.sin(now * 0.004 + p.x) * 2;
+        ctx.save();
+        ctx.translate(cx, cy + bob);
+        ctx.scale(pulse, pulse);
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(0, 0, GRID_SIZE, 0, Math.PI * 2);
+        const pr = parseInt(p.type.color.slice(1,3),16), pg = parseInt(p.type.color.slice(3,5),16), pb = parseInt(p.type.color.slice(5,7),16);
+        ctx.fillStyle = `rgba(${pr},${pg},${pb},0.25)`;
+        ctx.fill();
+        // Background circle
+        ctx.beginPath();
+        ctx.arc(0, 0, GRID_SIZE * 0.6, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${pr},${pg},${pb},0.5)`;
+        ctx.fill();
+        // Symbol
+        ctx.font = `bold ${GRID_SIZE * 1.1}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#FFF';
+        ctx.fillText(p.type.symbol, 0, 1);
+        ctx.restore();
+    }
+}
+
+function drawActivePowerup() {
+    if (!activePowerup) return;
+    const barW = 160, barH = 10;
+    const barX = CANVAS_WIDTH / 2 - barW / 2;
+    const barY = 10;
+    const pct = activePowerup.remaining / activePowerup.type.duration;
+    // Background
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 15);
+    // Label
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = activePowerup.type.color;
+    ctx.fillText(activePowerup.type.label, CANVAS_WIDTH / 2, barY + barH + 10);
+    // Bar
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = activePowerup.type.color;
+    ctx.fillRect(barX, barY, barW * pct, barH);
+}
+
+// ---- BOSS SYSTEM ----
+function spawnBoss() {
+    const bossIdx = Math.floor(currentWave / BOSS_WAVE_INTERVAL) % BOSS_TYPES.length;
+    const bt = BOSS_TYPES[bossIdx];
+    const theme = {
+        body: bt.bodyColor, belly: bt.belly, border: bt.border, glow: `rgba(255,23,68,0.3)`,
+        hornGradient: bt.hornGradient, maneColors: bt.maneColors, tailColors: bt.tailColors,
+        hoofColor: bt.hoofColor, eyeColor: bt.eyeColor, label: 'BOSS',
+    };
+    const spawnX = Math.floor(COLS * 0.5);
+    const spawnY = Math.floor(ROWS * 0.5);
+    boss = createUnicorn('boss', spawnX, spawnY, 'left', false, 0, theme);
+    boss.isBoss = true;
+    boss.bossType = bt;
+    boss.health = bt.health;
+    boss.maxHealth = bt.health;
+    unicorns.push(boss);
+}
+
+function damageBoss(amount) {
+    if (!boss || !boss.alive) return;
+    boss.health -= amount;
+    bossHitFlash = 200;
+    triggerShake(4, 200);
+    playSound('boss_hit');
+    if (boss.health <= 0) {
+        killUnicorn(boss);
+        score += 2000;
+        runKills++;
+        checkAchievement('boss_kill');
+    }
+}
+
+function drawBossHealthBar() {
+    if (!boss || !boss.alive) return;
+    const barW = 300, barH = 16;
+    const barX = CANVAS_WIDTH / 2 - barW / 2;
+    const barY = 42;
+    const pct = boss.health / boss.maxHealth;
+    // Background
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    roundRect(ctx, barX - 4, barY - 4, barW + 8, barH + 22, 6);
+    ctx.fill();
+    // Label
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = boss.bossType.color;
+    ctx.fillText(boss.bossType.label, CANVAS_WIDTH / 2, barY + barH + 14);
+    // Bar background
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    roundRect(ctx, barX, barY, barW, barH, 3);
+    ctx.fill();
+    // Bar fill
+    const flashAlpha = bossHitFlash > 0 ? 0.5 + 0.5 * Math.sin(bossHitFlash * 0.05) : 1;
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = pct > 0.5 ? '#FF1744' : pct > 0.25 ? '#FF6D00' : '#FF3D00';
+    roundRect(ctx, barX, barY, barW * pct, barH, 3);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+}
+
+function chooseBossDirection() {
+    if (!boss || !boss.alive || !player || !player.alive) return chooseNPCDirection(boss);
+    const bt = boss.bossType;
+
+    if (bt.id === 'phantom' && Math.random() < 0.03) {
+        // Teleport: move to a random open cell
+        for (let attempt = 0; attempt < 30; attempt++) {
+            const nx = randomInt(3, COLS - 4), ny = randomInt(3, ROWS - 4);
+            if (occupiedGrid[nx][ny] === null) {
+                boss.x = nx; boss.y = ny;
+                playSound('powerup');
+                // Teleport particles
+                for (let j = 0; j < 10; j++) {
+                    const a = (Math.PI * 2 * j) / 10;
+                    collectParticles.push({ x: nx * GRID_SIZE + 8, y: ny * GRID_SIZE + 8,
+                        vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, life: 1, color: '#B388FF', size: 4 });
+                }
+                break;
+            }
+        }
+    }
+
+    // Charger: lean toward player more aggressively
+    const possible = getPossibleDirections(boss.dir);
+    let best = []; let bestScore = -Infinity;
+    for (const dir of possible) {
+        const { dx, dy } = dirToDelta(dir);
+        const nx = boss.x + dx, ny = boss.y + dy;
+        if (isOutOfBounds(nx, ny) || occupiedGrid[nx][ny] !== null) {
+            if (-1 > bestScore) { bestScore = -1; best = [dir]; }
+            else if (-1 === bestScore) best.push(dir);
+            continue;
+        }
+        let sc = scoreDirection(boss.x, boss.y, dir, waveLookahead);
+        // Aggressive: bonus for moving toward player
+        if (bt.id === 'charger' && player.alive) {
+            const distBefore = Math.abs(boss.x - player.x) + Math.abs(boss.y - player.y);
+            const distAfter = Math.abs(nx - player.x) + Math.abs(ny - player.y);
+            if (distAfter < distBefore) sc += 3;
+        }
+        if (sc > bestScore) { bestScore = sc; best = [dir]; }
+        else if (sc === bestScore) best.push(dir);
+    }
+    return best[Math.floor(Math.random() * best.length)];
+}
+
+// ---- SCREEN SHAKE ----
+function triggerShake(intensity, duration) {
+    shakeIntensity = intensity || SHAKE_INTENSITY;
+    shakeTimer = duration || SHAKE_DURATION;
+}
+
+function applyShake() {
+    if (shakeTimer > 0) {
+        const ox = (Math.random() - 0.5) * shakeIntensity * 2;
+        const oy = (Math.random() - 0.5) * shakeIntensity * 2;
+        ctx.translate(ox, oy);
+        return true;
+    }
+    return false;
+}
+
+// ---- XP / LEVEL SYSTEM ----
+function xpForLevel(lvl) {
+    return Math.floor(XP_LEVEL_BASE * Math.pow(XP_LEVEL_SCALE, lvl - 1));
+}
+
+function addXP(amount) {
+    playerXP += amount;
+    while (playerLevel < MAX_LEVEL && playerXP >= xpForLevel(playerLevel)) {
+        playerXP -= xpForLevel(playerLevel);
+        playerLevel++;
+        playSound('unlock');
+    }
+}
+
+// ---- ACHIEVEMENT SYSTEM ----
+function checkAchievement(id) {
+    if (unlockedAchievements.includes(id)) return;
+    const ach = ACHIEVEMENTS.find(a => a.id === id);
+    if (!ach) return;
+    unlockedAchievements.push(id);
+    achievementPopup = { achievement: ach, timer: 3000 };
+    playSound('unlock');
+    saveSaveData();
+}
+
+function checkAchievements() {
+    if (currentWave >= 5) checkAchievement('wave5');
+    if (currentWave >= 10) checkAchievement('wave10');
+    if (score >= 5000) checkAchievement('score5000');
+    if (score >= 25000) checkAchievement('score25000');
+    if (totalKills >= 10) checkAchievement('kill10');
+    if (survivalTimer >= 60000) checkAchievement('survive60');
+    if (runCollectibles >= 20) checkAchievement('collect20');
+    if (modesWon.length >= GAME_MODES.length) checkAchievement('all_modes');
+}
+
+function drawAchievementPopup(delta) {
+    if (!achievementPopup) return;
+    achievementPopup.timer -= delta;
+    if (achievementPopup.timer <= 0) { achievementPopup = null; return; }
+    const a = achievementPopup.achievement;
+    const alpha = Math.min(1, achievementPopup.timer / 500, (3000 - (3000 - achievementPopup.timer)) / 500);
+    ctx.globalAlpha = Math.min(1, alpha);
+    const bw = 280, bh = 50;
+    const bx = CANVAS_WIDTH / 2 - bw / 2, by = CANVAS_HEIGHT - 80;
+    roundRect(ctx, bx, by, bw, bh, 10);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fill();
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText(`${a.icon} ${a.label} Unlocked!`, CANVAS_WIDTH / 2, by + bh / 2);
+    ctx.globalAlpha = 1;
+}
+
 // ---- NPC AI ----
 function scoreDirection(x, y, dir, depth) {
     const { dx, dy } = dirToDelta(dir);
@@ -801,6 +1419,10 @@ function scoreDirection(x, y, dir, depth) {
 }
 
 function chooseNPCDirection(npc) {
+    const p = npc.personality || NPC_PERSONALITIES[0];
+    const lookahead = Math.max(2, Math.round(waveLookahead * p.lookaheadMod));
+    const mistake = waveMistakeChance * p.mistakeMod;
+
     const possible = getPossibleDirections(npc.dir);
     let best = [];
     let bestScore = -Infinity;
@@ -814,12 +1436,22 @@ function chooseNPCDirection(npc) {
             else if (-1 === bestScore) best.push(dir);
             continue;
         }
-        const score = scoreDirection(npc.x, npc.y, dir, waveLookahead);
-        if (score > bestScore) { bestScore = score; best = [dir]; }
-        else if (score === bestScore) best.push(dir);
+        let sc = scoreDirection(npc.x, npc.y, dir, lookahead);
+        // Aggressive personality: bonus for moving toward player
+        if (p.aggressiveness > 0 && player && player.alive) {
+            const distBefore = Math.abs(npc.x - player.x) + Math.abs(npc.y - player.y);
+            const distAfter = Math.abs(nx - player.x) + Math.abs(ny - player.y);
+            if (distAfter < distBefore) sc += lookahead * p.aggressiveness;
+        }
+        // Defensive: bonus for moving away from all threats
+        if (p.aggressiveness < 0) {
+            sc += lookahead * 0.3; // prefer open space more
+        }
+        if (sc > bestScore) { bestScore = sc; best = [dir]; }
+        else if (sc === bestScore) best.push(dir);
     }
 
-    if (Math.random() < waveMistakeChance) {
+    if (Math.random() < mistake) {
         const safe = possible.filter(dir => {
             const { dx, dy } = dirToDelta(dir);
             const nx = npc.x + dx;
@@ -835,8 +1467,36 @@ function chooseNPCDirection(npc) {
 // ---- MOVEMENT & COLLISION ----
 function killUnicorn(unicorn) {
     if (!unicorn.alive) return;
+
+    // Boss takes damage instead of dying instantly
+    if (unicorn.isBoss && unicorn.health > 1) {
+        damageBoss(1);
+        return;
+    }
+
+    // Hat buff: cowboy hat gives one free collision per run
+    if (unicorn.isPlayer && !freeHitUsed && getHatBuff().freeHit) {
+        freeHitUsed = true;
+        triggerShake(3, 150);
+        playSound('collect');
+        // Flash effect
+        for (let j = 0; j < 8; j++) {
+            const a = (Math.PI * 2 * j) / 8;
+            collectParticles.push({ x: unicorn.x * GRID_SIZE + 8, y: unicorn.y * GRID_SIZE + 8,
+                vx: Math.cos(a) * 2.5, vy: Math.sin(a) * 2.5, life: 1, color: '#FFD700', size: 4 });
+        }
+        return; // Saved!
+    }
+
     unicorn.alive = false;
     unicorn.deathTime = performance.now();
+
+    // Track kills and score for NPC deaths
+    if (!unicorn.isPlayer) {
+        runKills++;
+        totalKills++;
+        score += Math.floor(SCORE_PER_KILL * scoreMultiplier);
+    }
 
     const cx = unicorn.x * GRID_SIZE + GRID_SIZE / 2;
     const cy = unicorn.y * GRID_SIZE + GRID_SIZE / 2;
@@ -856,14 +1516,20 @@ function killUnicorn(unicorn) {
         });
     }
 
-    if (unicorn.isPlayer) playSound('death');
-    else playSound('npc_death');
+    if (unicorn.isPlayer) {
+        playSound('death');
+        triggerShake(SHAKE_INTENSITY, SHAKE_DURATION);
+    } else {
+        playSound('npc_death');
+        triggerShake(3, 150);
+    }
 }
 
 function moveAllUnicorns() {
     const aliveUnicorns = unicorns.filter(u => u.alive);
     for (const u of aliveUnicorns) {
-        if (!u.isPlayer) u.nextDir = chooseNPCDirection(u);
+        if (u.isBoss) u.nextDir = chooseBossDirection();
+        else if (!u.isPlayer) u.nextDir = chooseNPCDirection(u);
     }
 
     const moves = aliveUnicorns.map(u => {
@@ -871,6 +1537,7 @@ function moveAllUnicorns() {
         return { unicorn: u, newX: u.x + dx, newY: u.y + dy };
     });
 
+    // Head-to-head check
     for (let i = 0; i < moves.length; i++) {
         for (let j = i + 1; j < moves.length; j++) {
             if (moves[i].newX === moves[j].newX && moves[i].newY === moves[j].newY) {
@@ -880,12 +1547,23 @@ function moveAllUnicorns() {
         }
     }
 
+    const isGhost = activePowerup && activePowerup.type.id === 'ghost';
+
     for (const m of moves) {
         if (!m.unicorn.alive) continue;
         const u = m.unicorn;
         u.dir = u.nextDir;
         if (isOutOfBounds(m.newX, m.newY)) { killUnicorn(u); continue; }
-        if (occupiedGrid[m.newX][m.newY] !== null) { killUnicorn(u); continue; }
+        const occupied = occupiedGrid[m.newX][m.newY];
+        if (occupied !== null) {
+            // Ghost mode: player passes through trails
+            if (u.isPlayer && isGhost) {
+                // Pass through — don't die
+            } else {
+                killUnicorn(u);
+                continue;
+            }
+        }
         const hue = (u.hueStart + u.trail.length * 8) % 360;
         const color = `hsl(${hue}, 100%, 60%)`;
         u.trail.push({ x: u.x, y: u.y, color });
@@ -893,6 +1571,10 @@ function moveAllUnicorns() {
         u.x = m.newX;
         u.y = m.newY;
     }
+
+    // Check collectible/powerup pickups after movement
+    checkCollectiblePickup();
+    checkPowerupPickup();
 
     if (player && !player.alive) { gameState = GAME_OVER; recordRound(false); return; }
     const aliveNPCs = unicorns.filter(u => !u.isPlayer && u.alive);
@@ -902,11 +1584,31 @@ function moveAllUnicorns() {
 // ---- ROUND TRACKING ----
 function recordRound(won) {
     roundsPlayed++;
+
+    // Calculate XP earned
+    const timeXP = Math.floor(survivalTimer / 1000) * XP_PER_SECOND;
+    const killXP = runKills * XP_PER_KILL;
+    const winXP = won ? XP_PER_WIN : 0;
+    const xpEarned = timeXP + killXP + winXP;
+    addXP(xpEarned);
+
+    // Save run summary
+    lastRunStats = {
+        score, time: survivalTimer, kills: runKills, wave: currentWave + 1,
+        collectibles: runCollectibles, xpEarned, won, mode: selectedGameMode,
+    };
+
     if (won) {
         currentWave++;
+        checkAchievement('first_win');
+        if (!modesWon.includes(selectedGameMode)) {
+            modesWon.push(selectedGameMode);
+        }
     } else {
         currentWave = 0;
     }
+
+    checkAchievements();
     saveSaveData();
 }
 
@@ -986,8 +1688,13 @@ function drawTrails() {
             alpha = Math.max(0, 1 - (now - unicorn.deathTime) / TRAIL_FADE_DURATION);
             if (alpha <= 0) continue;
         }
-        for (const seg of unicorn.trail) {
-            ctx.globalAlpha = alpha;
+        const trailLen = unicorn.trail.length;
+        for (let si = 0; si < trailLen; si++) {
+            const seg = unicorn.trail[si];
+            // Newer trail segments pulse subtly
+            const age = trailLen - si;
+            const pulse = age < 5 ? (0.85 + 0.15 * Math.sin(performance.now() * 0.008 + si)) : 1;
+            ctx.globalAlpha = alpha * pulse;
             ctx.fillStyle = seg.color;
             const x = seg.x * GRID_SIZE + 1, y = seg.y * GRID_SIZE + 1;
             const w = GRID_SIZE - 2, h = GRID_SIZE - 2, r = 3;
@@ -1867,21 +2574,82 @@ function drawCompanion(companionId, cx, cy, dir, trot, companionScale) {
     ctx.restore();
 }
 
+function updateCompanionPositions() {
+    if (!player || !player.alive) return;
+
+    // Record player pixel position in history
+    const px = player.x * GRID_SIZE + GRID_SIZE / 2;
+    const py = player.y * GRID_SIZE + GRID_SIZE / 2;
+    playerPosHistory.push({ px, py, dir: player.dir });
+    // Keep history bounded
+    if (playerPosHistory.length > 200) playerPosHistory.shift();
+
+    const comp = COMPANIONS.find(c => c.id === selectedCompanionId);
+    if (!comp || comp.type === 'none') return;
+
+    // How many companions to draw (dogs get multiple based on unlocks)
+    const count = (comp.type === 'dog') ? getUnlockedDogCount() : 1;
+    if (count === 0) return;
+
+    // Ensure visual state array is right size
+    while (companionVisuals.length < count) {
+        companionVisuals.push({ x: px, y: py, dir: player.dir });
+    }
+
+    // Update each companion via delayed history + perpendicular offset + lerp
+    for (let i = 0; i < count; i++) {
+        const delay = COMPANION_FOLLOW_DELAY * (1 + i * 0.7);
+        const histIdx = Math.max(0, playerPosHistory.length - 1 - Math.floor(delay));
+        const target = playerPosHistory[histIdx] || { px, py, dir: player.dir };
+
+        // Perpendicular offset: alternate left/right
+        const side = (i % 2 === 0) ? 1 : -1;
+        const offset = COMPANION_OFFSET_PX * side;
+        const { dx, dy } = dirToDelta(target.dir);
+        // Perpendicular is (-dy, dx)
+        const offX = target.px + (-dy) * offset;
+        const offY = target.py + (dx) * offset;
+
+        // Smooth interpolation
+        const cv = companionVisuals[i];
+        cv.x += (offX - cv.x) * COMPANION_LERP_SPEED;
+        cv.y += (offY - cv.y) * COMPANION_LERP_SPEED;
+        cv.dir = target.dir;
+    }
+}
+
 function drawAllUnicorns() {
     for (const u of unicorns) {
         if (!u.isPlayer) drawUnicorn(u);
     }
     if (player) {
         drawUnicorn(player);
-        // Draw companion next to player
+        // Draw companions using history-based following
         if (selectedCompanionId && selectedCompanionId !== 'none' && player.alive) {
-            const oppDir = OPPOSITES[player.dir];
-            const { dx, dy } = dirToDelta(oppDir);
-            const compX = player.x * GRID_SIZE + GRID_SIZE / 2 + dx * GRID_SIZE * 1.5;
-            const compY = player.y * GRID_SIZE + GRID_SIZE / 2 + dy * GRID_SIZE * 1.5;
-            // Scale companion to be about leg-height of unicorn
+            const comp = COMPANIONS.find(c => c.id === selectedCompanionId);
+            const count = (comp && comp.type === 'dog') ? getUnlockedDogCount() : (comp && comp.type !== 'none' ? 1 : 0);
             const compScale = PLAYER_SCALE * 0.55;
-            drawCompanion(selectedCompanionId, compX, compY, player.dir, player.trotPhase, compScale);
+            const now = performance.now();
+
+            for (let i = 0; i < Math.min(count, companionVisuals.length); i++) {
+                const cv = companionVisuals[i];
+                // Subtle bounce animation
+                const bounce = Math.sin(now * 0.005 + i * 2) * 1.5;
+                // Shadow
+                ctx.globalAlpha = 0.15;
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.ellipse(cv.x, cv.y + 8 * compScale, 6 * compScale, 2 * compScale, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+                // Subtle glow
+                ctx.beginPath();
+                ctx.arc(cv.x, cv.y + bounce, 10 * compScale, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 200, 0.08)';
+                ctx.fill();
+                // Draw the companion
+                drawCompanion(selectedCompanionId, cv.x, cv.y + bounce, cv.dir, player.trotPhase + i * 0.5, compScale);
+            }
         }
     }
 }
@@ -1899,13 +2667,51 @@ function drawHUD() {
     ctx.shadowBlur = 3;
     ctx.fillText(`Time: ${formatTime(survivalTimer)}`, 16, 14);
 
+    // Score + multiplier (second row)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(8, 30, 200, 22);
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${score}`, 16, 36);
+    if (scoreMultiplier > 1) {
+        ctx.fillStyle = '#6BCB77';
+        ctx.fillText(`x${scoreMultiplier.toFixed(1)}`, 130, 36);
+    }
+
     const aliveNPCs = unicorns.filter(u => !u.isPlayer && u.alive).length;
     const totalNPCs = unicorns.filter(u => !u.isPlayer).length;
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-    ctx.fillRect(CANVAS_WIDTH - 188, 8, 180, 32);
+    ctx.fillRect(CANVAS_WIDTH - 220, 8, 212, 32);
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText(`Wave ${currentWave + 1}  |  ${aliveNPCs}/${totalNPCs}`, CANVAS_WIDTH - 16, 14);
+    ctx.font = 'bold 16px monospace';
+    const waveLabel = isBossWave ? `BOSS` : `Wave ${currentWave + 1}`;
+    ctx.fillText(`${waveLabel}  |  ${aliveNPCs}/${totalNPCs}`, CANVAS_WIDTH - 16, 14);
+
+    // Score attack timer
+    if (selectedGameMode === 'scoreattack') {
+        const mode = GAME_MODES.find(m => m.id === 'scoreattack');
+        const remaining = Math.max(0, mode.timeLimitMs - scoreAttackTimer);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = remaining < 10000 ? '#FF4444' : '#FFD700';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText(`${formatTime(remaining)}`, CANVAS_WIDTH / 2, 14);
+    }
+
+    // Level badge + hat buff
+    ctx.textAlign = 'right';
+    ctx.font = '12px monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillText(`Lv.${playerLevel}`, CANVAS_WIDTH - 16, 36);
+
+    // Active hat buff indicator
+    const activeHat = HATS.find(h => h.id === selectedHatId);
+    if (activeHat && activeHat.buffDesc) {
+        ctx.font = '11px monospace';
+        ctx.fillStyle = 'rgba(199,125,255,0.5)';
+        ctx.fillText(`${activeHat.label}: ${activeHat.buffDesc}${freeHitUsed ? ' (used)' : ''}`, CANVAS_WIDTH - 16, 48);
+    }
 
     ctx.shadowBlur = 0;
 
@@ -2017,7 +2823,11 @@ function drawTitleScreen() {
 
     ctx.font = '22px sans-serif';
     ctx.fillStyle = '#E0B0FF';
-    ctx.fillText('A Rainbow Trail Game', CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.30);
+    ctx.fillText('A Rainbow Trail Game', CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.29);
+
+    ctx.font = 'italic 16px sans-serif';
+    ctx.fillStyle = 'rgba(224, 176, 255, 0.6)';
+    ctx.fillText('A Game Project by Sophia and John H', CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.34);
 
     // Instructions box
     const boxY = CANVAS_HEIGHT * 0.35;
@@ -2049,42 +2859,45 @@ function drawTitleScreen() {
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.fillText(`Wave ${currentWave + 1}  |  Rounds: ${roundsPlayed}`, CANVAS_WIDTH / 2, boxY + 155);
 
-    // ---- Buttons ----
-    const btnY = CANVAS_HEIGHT * 0.72;
-    const btnW = 220, btnH = 52, btnGap = 30;
+    // ---- Buttons (2 rows of 2) ----
+    const btnW = 250, btnH = 46, btnGap = 16;
+    const row1Y = CANVAS_HEIGHT * 0.66;
+    const row2Y = row1Y + btnH + btnGap;
+    const leftX = CANVAS_WIDTH / 2 - btnW - btnGap / 2;
+    const rightX = CANVAS_WIDTH / 2 + btnGap / 2;
 
-    // Start button
-    const startX = CANVAS_WIDTH / 2 - btnW - btnGap / 2;
-    titleStartBtn = { x: startX, y: btnY, w: btnW, h: btnH };
-    roundRect(ctx, startX, btnY, btnW, btnH, 12);
-    ctx.fillStyle = '#6BCB77';
-    ctx.fill();
-    ctx.strokeStyle = '#4a9c5a';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.font = 'bold 24px sans-serif';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillText(isMobile ? 'Play' : 'Play  [Enter]', startX + btnW / 2, btnY + btnH / 2);
+    function drawBtn(bx, by, color, stroke, label) {
+        roundRect(ctx, bx, by, btnW, btnH, 12);
+        ctx.fillStyle = color; ctx.fill();
+        ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke();
+        ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(label, bx + btnW / 2, by + btnH / 2);
+    }
 
-    // Customize button
-    const custX = CANVAS_WIDTH / 2 + btnGap / 2;
-    titleCustomBtn = { x: custX, y: btnY, w: btnW, h: btnH };
-    roundRect(ctx, custX, btnY, btnW, btnH, 12);
-    ctx.fillStyle = '#C77DFF';
-    ctx.fill();
-    ctx.strokeStyle = '#9B59B6';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.font = 'bold 24px sans-serif';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillText(isMobile ? 'Customize' : 'Customize  [C]', custX + btnW / 2, btnY + btnH / 2);
+    // Play
+    titleStartBtn = { x: leftX, y: row1Y, w: btnW, h: btnH };
+    drawBtn(leftX, row1Y, '#6BCB77', '#4a9c5a', isMobile ? 'Play' : 'Play  [Enter]');
 
-    // Blinking hint below
+    // Mode
+    titleModeBtn = { x: rightX, y: row1Y, w: btnW, h: btnH };
+    const modeLabel = GAME_MODES.find(m => m.id === selectedGameMode);
+    drawBtn(rightX, row1Y, '#4FC3F7', '#0288D1', isMobile ? modeLabel.label : `Mode [G]`);
+    ctx.font = '11px sans-serif'; ctx.fillStyle = '#4FC3F7';
+    ctx.fillText(modeLabel.label, rightX + btnW / 2, row1Y + btnH + 12);
+
+    // Customize
+    titleCustomBtn = { x: leftX, y: row2Y, w: btnW, h: btnH };
+    drawBtn(leftX, row2Y, '#C77DFF', '#9B59B6', isMobile ? 'Customize' : 'Custom [C]');
+
+    // Instructions
+    titleHelpBtn = { x: rightX, y: row2Y, w: btnW, h: btnH };
+    drawBtn(rightX, row2Y, '#FF69B4', '#C71585', isMobile ? 'How to Play' : 'Help [H]');
+
+    // Blinking hint
     blinkTimer = (blinkTimer + 0.03) % (Math.PI * 2);
     ctx.globalAlpha = 0.3 + 0.3 * Math.sin(blinkTimer);
-    ctx.font = '16px sans-serif';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillText(isMobile ? 'Tap a button above' : 'Press Enter to start  |  C to customize', CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.85);
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(isMobile ? 'Tap a button above' : 'Enter = Play  |  G = Mode  |  C = Custom  |  H = Help', CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.90);
     ctx.globalAlpha = 1;
 
     ctx.restore();
@@ -2393,7 +3206,7 @@ function drawGameOverScreen() {
     blinkTimer = (blinkTimer + 0.03) % (Math.PI * 2);
     ctx.globalAlpha = 0.5 + 0.5 * Math.sin(blinkTimer);
     ctx.fillStyle = '#FFFFFF';
-    const restartText = isMobile ? 'Tap to Play Again' : 'Press ENTER for Menu  |  R to Restart';
+    const restartText = isMobile ? 'Tap for Summary' : 'Enter = Summary  |  R = Restart';
     ctx.fillText(restartText, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 118);
     ctx.globalAlpha = 1;
 
@@ -2437,8 +3250,198 @@ function drawWinScreen() {
     blinkTimer = (blinkTimer + 0.03) % (Math.PI * 2);
     ctx.globalAlpha = 0.5 + 0.5 * Math.sin(blinkTimer);
     ctx.fillStyle = '#FFFFFF';
-    const restartText = isMobile ? 'Tap for Next Wave' : 'Press ENTER for Menu  |  R for Next Wave';
+    const restartText = isMobile ? 'Tap for Summary' : 'Enter = Summary  |  R = Next Wave';
     ctx.fillText(restartText, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 118);
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+}
+
+// ---- UNLOCK POPUP ----
+function drawUnlockPopup() {
+    if (!unlockPopup) return;
+    const alpha = Math.min(1, unlockPopup.timer / 500);
+    const scale = 1 + (1 - alpha) * 0.3;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 50);
+    ctx.scale(scale, scale);
+    ctx.font = 'bold 36px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillText(unlockPopup.text, 2, 2);
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText(unlockPopup.text, 0, 0);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+}
+
+// ---- INSTRUCTIONS SCREEN ----
+function drawInstructionsScreen() {
+    drawBackground();
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    ctx.font = 'bold 42px sans-serif'; ctx.fillStyle = '#E0B0FF';
+    ctx.fillText('How To Play', CANVAS_WIDTH / 2, 50);
+
+    const cardW = 700, cardH = 480;
+    const cardX = CANVAS_WIDTH / 2 - cardW / 2, cardY = 80;
+    roundRect(ctx, cardX, cardY, cardW, cardH, 16);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fill();
+
+    ctx.textAlign = 'left';
+    const x = cardX + 40;
+    let y = cardY + 40;
+    const section = (title, color) => { ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = color; ctx.fillText(title, x, y); y += 30; };
+    const line = (text) => { ctx.font = '16px sans-serif'; ctx.fillStyle = '#DDD'; ctx.fillText(text, x + 10, y); y += 24; };
+
+    section('\u2B50  Objective', '#FFD700');
+    line('You are a magical unicorn leaving rainbow poop trails!');
+    line('Avoid all poop trails (yours and others) or you lose.');
+    line('Outlast the NPC unicorns to win each wave.');
+    y += 8;
+
+    section('\uD83D\uDC36  Dogs & Companions', '#4FC3F7');
+    line('Unlock dogs by playing more rounds (3, 6, 10 rounds).');
+    line('Dogs follow you and give +5% score per dog.');
+    line('Ponies and cats also give a score bonus!');
+    y += 8;
+
+    section('\uD83C\uDFA9  Hats', '#C77DFF');
+    line('Each hat gives a unique gameplay buff.');
+    line('Crown: +10% score  |  Cowboy: 1 free collision');
+    line('Wizard: slower speed scaling  |  And more!');
+    y += 8;
+
+    section('\uD83C\uDFAE  Controls', '#6BCB77');
+    line(isMobile ? 'D-pad or swipe to move  |  Tap buttons for menus' : 'Arrow Keys / WASD to move  |  Esc to pause  |  M = sound  |  F = fullscreen');
+    y += 8;
+
+    section('\uD83D\uDE80  Progression', '#FF69B4');
+    line('Win waves to face harder opponents. Lose = restart at Wave 1.');
+    line('Collect stars & gems for score. Grab power-ups for abilities!');
+
+    // Back button
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = '#AAA';
+    ctx.fillText(isMobile ? 'Tap anywhere to go back' : 'Press Esc or Enter to go back', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 40);
+
+    ctx.restore();
+}
+
+// ---- MODE SELECT SCREEN ----
+let modeSelectBtns = [];
+
+function handleModeSelectTouch(cx, cy) {
+    for (const btn of modeSelectBtns) {
+        if (hitTest(cx, cy, btn)) {
+            selectedGameMode = btn.modeId;
+            saveSaveData();
+            gameState = TITLE;
+            return;
+        }
+    }
+}
+
+function drawModeSelectScreen(delta) {
+    drawBackground();
+    modeSelectBtns = [];
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    ctx.font = 'bold 42px sans-serif'; ctx.fillStyle = '#4FC3F7';
+    ctx.fillText('Game Modes', CANVAS_WIDTH / 2, 60);
+
+    const cardW = 200, cardH = 120, gap = 16;
+    const totalW = GAME_MODES.length * (cardW + gap) - gap;
+    const sx = (CANVAS_WIDTH - totalW) / 2;
+    const cy = CANVAS_HEIGHT / 2 - 20;
+
+    for (let i = 0; i < GAME_MODES.length; i++) {
+        const m = GAME_MODES[i];
+        const bx = sx + i * (cardW + gap);
+        const by = cy - cardH / 2;
+        const isSel = selectedGameMode === m.id;
+        modeSelectBtns.push({ x: bx, y: by, w: cardW, h: cardH, modeId: m.id });
+
+        roundRect(ctx, bx, by, cardW, cardH, 12);
+        ctx.fillStyle = isSel ? 'rgba(79, 195, 247, 0.3)' : 'rgba(0,0,0,0.3)'; ctx.fill();
+        if (isSel) { ctx.strokeStyle = '#4FC3F7'; ctx.lineWidth = 2.5; ctx.stroke(); }
+
+        ctx.font = 'bold 20px sans-serif';
+        ctx.fillStyle = isSel ? '#4FC3F7' : '#FFF';
+        ctx.fillText(m.label, bx + cardW / 2, by + 35);
+
+        ctx.font = '13px sans-serif';
+        ctx.fillStyle = '#BBB';
+        ctx.fillText(m.desc, bx + cardW / 2, by + 60);
+
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = isSel ? '#FFD700' : '#666';
+        ctx.fillText(isSel ? 'SELECTED' : `Press ${i + 1}`, bx + cardW / 2, by + 90);
+    }
+
+    ctx.font = '18px sans-serif'; ctx.fillStyle = '#888';
+    ctx.fillText(isMobile ? 'Tap a mode, then go back' : 'Press 1-5 to select  |  Esc to go back', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+
+    ctx.restore();
+}
+
+// ---- RUN SUMMARY SCREEN ----
+function drawRunSummaryScreen(delta) {
+    drawBackground();
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    const s = lastRunStats;
+    if (!s) { gameState = TITLE; ctx.restore(); return; }
+
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillStyle = s.won ? '#6BCB77' : '#FF4444';
+    ctx.fillText(s.won ? 'VICTORY!' : 'GAME OVER', CANVAS_WIDTH / 2, 70);
+
+    // Stats card
+    const cardW = 500, cardH = 340;
+    const cardX = CANVAS_WIDTH / 2 - cardW / 2, cardY = 110;
+    roundRect(ctx, cardX, cardY, cardW, cardH, 16);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1; ctx.stroke();
+
+    const lines = [
+        { label: 'Score', value: String(s.score), color: '#FFD700' },
+        { label: 'Time', value: formatTime(s.time), color: '#FFF' },
+        { label: 'Wave', value: String(s.wave), color: '#4FC3F7' },
+        { label: 'Defeats', value: String(s.kills), color: '#FF6B6B' },
+        { label: 'Collected', value: String(s.collectibles), color: '#C77DFF' },
+        { label: 'XP Earned', value: `+${s.xpEarned}`, color: '#6BCB77' },
+        { label: 'Mode', value: (GAME_MODES.find(m => m.id === s.mode) || {}).label || s.mode, color: '#4FC3F7' },
+    ];
+
+    ctx.font = '18px sans-serif';
+    const lineH = 38;
+    const startY = cardY + 35;
+    for (let i = 0; i < lines.length; i++) {
+        const ly = startY + i * lineH;
+        ctx.textAlign = 'left'; ctx.fillStyle = '#AAA';
+        ctx.fillText(lines[i].label, cardX + 60, ly);
+        ctx.textAlign = 'right'; ctx.fillStyle = lines[i].color;
+        ctx.font = 'bold 18px sans-serif';
+        ctx.fillText(lines[i].value, cardX + cardW - 60, ly);
+        ctx.font = '18px sans-serif';
+    }
+
+    // Level info
+    ctx.textAlign = 'center';
+    ctx.font = '16px sans-serif'; ctx.fillStyle = '#E0B0FF';
+    ctx.fillText(`Level ${playerLevel}  \u2014  ${playerXP}/${xpForLevel(playerLevel)} XP`, CANVAS_WIDTH / 2, cardY + cardH + 20);
+
+    // Prompt
+    blinkTimer = (blinkTimer + 0.03) % (Math.PI * 2);
+    ctx.globalAlpha = 0.5 + 0.5 * Math.sin(blinkTimer);
+    ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#FFF';
+    ctx.fillText(isMobile ? 'Tap to continue' : 'Enter = Menu  |  R = Play Again', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 50);
     ctx.globalAlpha = 1;
 
     ctx.restore();
@@ -2500,15 +3503,81 @@ function updateCountdown(delta) {
 function updateGame(delta) {
     survivalTimer += delta;
     moveAccumulator += delta;
+
+    // Speed boost + hat modifiers
+    const wizResist = getHatBuff().speedResist || 0;
+    const rainbowSpeed = getHatBuff().speedBonus || 0;
+    let effectiveInterval = waveMoveInterval * (1 + wizResist) * (1 - rainbowSpeed);
+    if (activePowerup && activePowerup.type.id === 'speed') effectiveInterval *= 0.6;
+
     for (const u of unicorns) {
         if (u.alive) u.trotPhase += TROT_SPEED * delta;
     }
-    while (moveAccumulator >= waveMoveInterval) {
-        moveAccumulator -= waveMoveInterval;
+    while (moveAccumulator >= effectiveInterval) {
+        moveAccumulator -= effectiveInterval;
         if (gameState === PLAYING) moveAllUnicorns();
     }
+
+    // Scoring: survival score (hat + companion bonuses)
+    const hatBuff = getHatBuff();
+    const hatScoreMult = 1 + (hatBuff.scoreMult || 0);
+    const compBonus = 1 + getCompanionScoreBonus();
+    score += Math.floor(SCORE_PER_SECOND * scoreMultiplier * hatScoreMult * compBonus * delta / 1000);
+    multiplierTimer += delta;
+    if (multiplierTimer >= MULTIPLIER_GROWTH_INTERVAL) {
+        multiplierTimer -= MULTIPLIER_GROWTH_INTERVAL;
+        scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + MULTIPLIER_INCREMENT);
+    }
+
+    // Collectible spawning
+    collectibleTimer += delta;
+    if (collectibleTimer >= COLLECTIBLE_SPAWN_INTERVAL) {
+        collectibleTimer -= COLLECTIBLE_SPAWN_INTERVAL;
+        spawnCollectible();
+    }
+
+    // Power-up spawning
+    powerupTimer += delta;
+    if (powerupTimer >= POWERUP_SPAWN_INTERVAL) {
+        powerupTimer -= POWERUP_SPAWN_INTERVAL;
+        spawnPowerup();
+    }
+
+    updatePowerup(delta);
+    updateCompanionPositions();
     updateTrailFades();
     updateParticles(delta);
+
+    // Collect particles
+    for (let i = collectParticles.length - 1; i >= 0; i--) {
+        const p = collectParticles[i];
+        p.x += p.vx; p.y += p.vy; p.life -= 0.04;
+        if (p.life <= 0) collectParticles.splice(i, 1);
+    }
+
+    // Screen shake
+    if (shakeTimer > 0) shakeTimer -= delta;
+    // Boss hit flash
+    if (bossHitFlash > 0) bossHitFlash -= delta;
+    // Unlock popup
+    if (unlockPopup) { unlockPopup.timer -= delta; if (unlockPopup.timer <= 0) unlockPopup = null; }
+
+    // Achievement popup
+    if (achievementPopup) achievementPopup.timer -= delta;
+
+    // Score attack timer
+    if (selectedGameMode === 'scoreattack') {
+        scoreAttackTimer += delta;
+        const mode = GAME_MODES.find(m => m.id === 'scoreattack');
+        if (scoreAttackTimer >= mode.timeLimitMs && player && player.alive) {
+            gameState = WIN;
+            recordRound(true);
+            playSound('win');
+            spawnWinParticles();
+        }
+    }
+
+    checkAchievements();
 }
 
 // ---- MAIN LOOP ----
@@ -2523,6 +3592,12 @@ function gameLoop(timestamp) {
         case TITLE:
             drawTitleScreen();
             break;
+        case INSTRUCTIONS:
+            drawInstructionsScreen();
+            break;
+        case MODE_SELECT:
+            drawModeSelectScreen(clampedDelta);
+            break;
         case CUSTOMIZE:
             drawCustomizeScreen(clampedDelta);
             break;
@@ -2533,15 +3608,34 @@ function gameLoop(timestamp) {
             break;
         case PLAYING:
             updateGame(clampedDelta);
+            ctx.save();
+            applyShake();
             drawBackground();
             drawTrails();
+            drawCollectibles();
+            drawPowerups();
             drawAllUnicorns();
             drawParticles(deathParticles);
+            drawParticles(collectParticles);
+            ctx.restore();
             drawHUD();
+            drawActivePowerup();
+            drawBossHealthBar();
+            drawAchievementPopup(clampedDelta);
+            drawUnlockPopup();
+            // Ghost mode visual indicator
+            if (activePowerup && activePowerup.type.id === 'ghost' && player && player.alive) {
+                ctx.globalAlpha = 0.15 + 0.1 * Math.sin(performance.now() * 0.01);
+                ctx.fillStyle = '#E0E0FF';
+                ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                ctx.globalAlpha = 1;
+            }
             break;
         case PAUSED:
             drawBackground();
             drawTrails();
+            drawCollectibles();
+            drawPowerups();
             drawAllUnicorns();
             drawHUD();
             drawPauseOverlay();
@@ -2563,6 +3657,9 @@ function gameLoop(timestamp) {
             drawAllUnicorns();
             drawHUD();
             drawWinScreen();
+            break;
+        case RUN_SUMMARY:
+            drawRunSummaryScreen(clampedDelta);
             break;
     }
 }
