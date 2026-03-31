@@ -171,11 +171,34 @@ const HAIRSTYLES = [
 ];
 
 // ---- COMPANIONS ----
-const COMPANION_FOLLOW_DELAY = 8;        // grid steps behind player in history
-const COMPANION_OFFSET_PX = 12;          // perpendicular offset in pixels
-const COMPANION_LERP_SPEED = 0.18;       // interpolation smoothing (0-1)
-const COMPANION_SCORE_BONUS = 0.05;      // +5% score multiplier per companion
+// ---- RAINBOW POINTS (currency) ----
+const RP_PER_MATCH = 10;
+const RP_PER_FOOD = 1;
+const RP_PER_WAVE = 5;
+const RP_BOSS_BONUS = 25;
 
+// ---- DOG COMPANION SYSTEM ----
+const COMPANION_FOLLOW_DELAY = 10;       // grid steps behind player in history
+const COMPANION_OFFSET_PX = 14;          // perpendicular offset in pixels
+const COMPANION_LERP_SPEED = 0.14;       // smooth interpolation (lower = more lag)
+
+// Dogs unlock at match milestones, one equipped at a time
+const DOGS = [
+    { id: 'default_pup',    label: 'Default Pup',    matches: 0,  rarity: 'common',    buff: null,
+      buffDesc: 'A loyal friend!',          bodyColor: '#A1887F', earColor: '#5D4037' },
+    { id: 'speed_pup',      label: 'Speed Pup',      matches: 5,  rarity: 'common',    buff: { speedBonus: 0.05 },
+      buffDesc: '+5% movement speed',       bodyColor: '#4FC3F7', earColor: '#0288D1' },
+    { id: 'magnet_pup',     label: 'Magnet Pup',     matches: 10, rarity: 'rare',      buff: { magnetRadius: 2 },
+      buffDesc: 'Attracts nearby pickups',  bodyColor: '#FF69B4', earColor: '#C71585' },
+    { id: 'shield_pup',     label: 'Shield Pup',     matches: 20, rarity: 'rare',      buff: { freeCrash: true },
+      buffDesc: '1 free crash per run',     bodyColor: '#FFD700', earColor: '#DAA520' },
+    { id: 'multiplier_pup', label: 'Multiplier Pup', matches: 35, rarity: 'epic',      buff: { scoreMult: 0.10 },
+      buffDesc: '+10% score gain',          bodyColor: '#C77DFF', earColor: '#7B1FA2' },
+    { id: 'ghost_pup',      label: 'Ghost Pup',      matches: 50, rarity: 'legendary', buff: { ghostPass: true },
+      buffDesc: 'Pass through trail once',  bodyColor: '#E0E0FF', earColor: '#9E9EFF' },
+];
+
+// Old companions kept for non-dog types (ponies, cats)
 const COMPANIONS = [
     { id: 'none',      label: 'None',        type: 'none'  },
     { id: 'pony_pink', label: 'Pink Pony',   type: 'pony', bodyColor: '#FFB6D9', maneColor: '#FF69B4' },
@@ -183,23 +206,41 @@ const COMPANIONS = [
     { id: 'pony_mint', label: 'Mint Pony',   type: 'pony', bodyColor: '#A3FFD6', maneColor: '#2ECC71' },
     { id: 'cat_orange', label: 'Orange Cat', type: 'cat',  bodyColor: '#FFB74D', stripeColor: '#E65100' },
     { id: 'cat_gray',   label: 'Gray Cat',   type: 'cat',  bodyColor: '#BDBDBD', stripeColor: '#616161' },
-    { id: 'dog_brown',  label: 'Brown Dog',  type: 'dog',  bodyColor: '#A1887F', earColor: '#5D4037' },
-    { id: 'dog_golden', label: 'Golden Dog',  type: 'dog',  bodyColor: '#FFD54F', earColor: '#F9A825' },
 ];
 
-// Dog unlock thresholds (rounds played)
-const DOG_UNLOCK_THRESHOLDS = [
-    { rounds: 3,  count: 1, label: 'Dog Unlocked!' },
-    { rounds: 6,  count: 2, label: 'Second Dog!' },
-    { rounds: 10, count: 3, label: 'Dog Pack!' },
-];
+function isDogUnlocked(dog) { return roundsPlayed >= dog.matches; }
+function getEquippedDog() { return DOGS.find(d => d.id === equippedDogId) || DOGS[0]; }
+function getDogBuff() { return getEquippedDog().buff || {}; }
 
-function getUnlockedDogCount() {
-    let count = 0;
-    for (const t of DOG_UNLOCK_THRESHOLDS) {
-        if (roundsPlayed >= t.rounds) count = t.count;
-    }
-    return count;
+// ---- ACCESSORY SHOP (Rainbow Points) ----
+// Add cost + rarity + buff to existing accessories
+const ACCESSORY_SHOP = {
+    'none':               { cost: 0,   rarity: 'common',    buff: null, buffDesc: '' },
+    'crown':              { cost: 100, rarity: 'common',    buff: { scoreMult: 0.05 }, buffDesc: '+5% score' },
+    'party_hat':          { cost: 50,  rarity: 'common',    buff: null, buffDesc: 'Just fun!' },
+    'top_hat':            { cost: 150, rarity: 'rare',      buff: { scoreMult: 0.08 }, buffDesc: '+8% score' },
+    'wizard_hat_tall':    { cost: 250, rarity: 'rare',      buff: { speedResist: 0.10 }, buffDesc: 'Slower speed scaling' },
+    'wizard_hat_wide':    { cost: 250, rarity: 'rare',      buff: { poopValue: 0.10 }, buffDesc: '+10% pickup value' },
+    'helmet':             { cost: 300, rarity: 'epic',      buff: { freeHit: true }, buffDesc: '1 free collision' },
+    'pirate_hat':         { cost: 200, rarity: 'rare',      buff: { scoreMult: 0.05 }, buffDesc: '+5% score' },
+    'flower_crown':       { cost: 75,  rarity: 'common',    buff: null, buffDesc: 'Pretty!' },
+    'sunglasses_square':  { cost: 150, rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
+    'sunglasses_angled':  { cost: 150, rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
+    'halo':               { cost: 500, rarity: 'legendary', buff: { bonusLife: true }, buffDesc: '+1 life every 10 waves' },
+    'headphones_blue':    { cost: 100, rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
+    'headphones_pink':    { cost: 100, rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
+    'bow':                { cost: 75,  rarity: 'common',    buff: null, buffDesc: 'Cute!' },
+    'cape_red':           { cost: 750, rarity: 'legendary', buff: { scoreMult: 0.10, speedBonus: 0.05 }, buffDesc: '+10% score +5% speed' },
+};
+
+function isAccessoryOwned(accId) {
+    if (accId === 'none') return true;
+    return ownedAccessories.includes(accId);
+}
+
+function getAccessoryBuff() {
+    const shop = ACCESSORY_SHOP[selectedAccessoryId];
+    return (shop && shop.buff) || {};
 }
 
 // ---- SCORING SYSTEM ----
@@ -390,7 +431,12 @@ let selectedHairstyle = 'flowing';
 let selectedManeColors = ['#FF69B4', '#C77DFF', '#7B68EE', '#4FC3F7', '#66BB6A', '#FFD700', '#FFFFFF'];
 let selectedAvatarId = 'classic';
 let selectedAccessoryId = 'none';
-let customizeTab = 'avatar';  // 'avatar' | 'accessory' | 'mane' | 'companions'
+let equippedDogId = 'default_pup';
+let rainbowPoints = 0;
+let ownedAccessories = ['none'];      // accessory IDs the player has purchased
+let dogGhostUsed = false;             // ghost pup one-time trail pass
+let dogShieldUsed = false;            // shield pup one-time crash save
+let customizeTab = 'avatar';  // 'avatar' | 'accessory' | 'mane' | 'dogs'
 let maneEditStrand = 0;     // which strand index is selected for color editing
 
 // ---- SCORING STATE ----
@@ -467,6 +513,9 @@ function loadSaveData() {
             if (typeof data.gameMode === 'string') selectedGameMode = data.gameMode;
             if (typeof data.avatarId === 'string') selectedAvatarId = data.avatarId;
             if (typeof data.accessoryId === 'string') selectedAccessoryId = data.accessoryId;
+            if (typeof data.equippedDogId === 'string') equippedDogId = data.equippedDogId;
+            if (typeof data.rainbowPoints === 'number') rainbowPoints = data.rainbowPoints;
+            if (Array.isArray(data.ownedAccessories)) ownedAccessories = data.ownedAccessories;
         }
     } catch (e) {}
     applyPlayerColor();
@@ -490,6 +539,9 @@ function saveSaveData() {
             gameMode: selectedGameMode,
             avatarId: selectedAvatarId,
             accessoryId: selectedAccessoryId,
+            equippedDogId: equippedDogId,
+            rainbowPoints: rainbowPoints,
+            ownedAccessories: ownedAccessories,
         }));
     } catch (e) {}
 }
@@ -529,17 +581,18 @@ function isHatUnlocked(hat) {
 }
 
 function getHatBuff() {
-    const hat = HATS.find(h => h.id === selectedHatId);
-    return (hat && hat.buff) || {};
+    // Hats replaced by accessory shop — delegate to accessory buff
+    return getAccessoryBuff();
 }
 
 function getCompanionScoreBonus() {
-    if (!selectedCompanionId || selectedCompanionId === 'none') return 0;
-    const comp = COMPANIONS.find(c => c.id === selectedCompanionId);
-    if (!comp || comp.type === 'none') return 0;
-    const dogCount = (comp.type === 'dog') ? Math.min(getUnlockedDogCount(), 1) : 0;
-    // Each active companion gives a bonus; dogs give extra per unlocked dog
-    return COMPANION_SCORE_BONUS * (dogCount > 0 ? getUnlockedDogCount() : 1);
+    // Dog multiplier buff
+    const dogBuff = getDogBuff();
+    const dogMult = dogBuff.scoreMult || 0;
+    // Accessory score buff
+    const accBuff = getAccessoryBuff();
+    const accMult = accBuff.scoreMult || 0;
+    return dogMult + accMult;
 }
 
 // ---- MOBILE / TOUCH STATE ----
@@ -744,6 +797,8 @@ function spawnUnicorns() {
     playerPosHistory = [];
     companionVisuals = [];
     freeHitUsed = false;
+    dogGhostUsed = false;
+    dogShieldUsed = false;
 
     applyPlayerColor();
     applyManeColors();
@@ -1125,7 +1180,26 @@ function handleCustomizeTouch(cx, cy) {
         else if (btn.action === 'hairstyle') { selectedHairstyle = btn.styleId; saveSaveData(); }
         else if (btn.action === 'companion') { selectedCompanionId = btn.companionId; saveSaveData(); }
         else if (btn.action === 'avatar') { selectedAvatarId = btn.avatarId; saveSaveData(); }
-        else if (btn.action === 'accessory') { selectedAccessoryId = btn.accessoryId; saveSaveData(); }
+        else if (btn.action === 'accessory') {
+            // Purchase if not owned, equip if owned
+            if (isAccessoryOwned(btn.accessoryId)) {
+                selectedAccessoryId = btn.accessoryId; saveSaveData();
+            } else {
+                const shop = ACCESSORY_SHOP[btn.accessoryId];
+                if (shop && rainbowPoints >= shop.cost) {
+                    rainbowPoints -= shop.cost;
+                    ownedAccessories.push(btn.accessoryId);
+                    selectedAccessoryId = btn.accessoryId;
+                    playSound('unlock');
+                    unlockPopup = { text: `\u2728 ${ACCESSORIES.find(a => a.id === btn.accessoryId).label} Purchased!`, timer: 2500 };
+                    saveSaveData();
+                }
+            }
+        }
+        else if (btn.action === 'dog') {
+            const dog = DOGS.find(d => d.id === btn.dogId);
+            if (dog && isDogUnlocked(dog)) { equippedDogId = btn.dogId; saveSaveData(); }
+        }
         return;
     }
 }
@@ -1146,9 +1220,12 @@ function spawnCollectible() {
 
 function checkCollectiblePickup() {
     if (!player || !player.alive) return;
+    const magnetR = getDogBuff().magnetRadius || 0;
     for (let i = collectibles.length - 1; i >= 0; i--) {
         const c = collectibles[i];
-        if (c.x === player.x && c.y === player.y) {
+        const dx = Math.abs(c.x - player.x);
+        const dy = Math.abs(c.y - player.y);
+        if ((c.x === player.x && c.y === player.y) || (magnetR > 0 && dx <= magnetR && dy <= magnetR)) {
             const poopMult = 1 + (getHatBuff().poopValue || 0);
             score += Math.floor(c.type.score * scoreMultiplier * poopMult);
             scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + c.type.multiplierBoost);
@@ -1556,8 +1633,21 @@ function killUnicorn(unicorn) {
         return;
     }
 
-    // Hat buff: cowboy hat gives one free collision per run
-    if (unicorn.isPlayer && !freeHitUsed && getHatBuff().freeHit) {
+    // Shield Pup: free crash once per run
+    if (unicorn.isPlayer && !dogShieldUsed && getDogBuff().freeCrash) {
+        dogShieldUsed = true;
+        triggerShake(3, 150);
+        playSound('collect');
+        for (let j = 0; j < 8; j++) {
+            const a = (Math.PI * 2 * j) / 8;
+            collectParticles.push({ x: unicorn.x * GRID_SIZE + 8, y: unicorn.y * GRID_SIZE + 8,
+                vx: Math.cos(a) * 2.5, vy: Math.sin(a) * 2.5, life: 1, color: '#FFD700', size: 4 });
+        }
+        return; // Saved by dog!
+    }
+
+    // Hat buff: cowboy hat / helmet gives one free collision per run
+    if (unicorn.isPlayer && !freeHitUsed && (getHatBuff().freeHit || getAccessoryBuff().freeHit)) {
         freeHitUsed = true;
         triggerShake(3, 150);
         playSound('collect');
@@ -1638,9 +1728,18 @@ function moveAllUnicorns() {
         if (isOutOfBounds(m.newX, m.newY)) { killUnicorn(u); continue; }
         const occupied = occupiedGrid[m.newX][m.newY];
         if (occupied !== null) {
-            // Ghost mode: player passes through trails
+            // Ghost mode OR Ghost Pup (one-time) lets player pass through trails
             if (u.isPlayer && isGhost) {
-                // Pass through — don't die
+                // Pass through — powerup active
+            } else if (u.isPlayer && !dogGhostUsed && getDogBuff().ghostPass) {
+                dogGhostUsed = true;
+                playSound('collect');
+                // Ghost pup visual burst
+                for (let j = 0; j < 6; j++) {
+                    const a = (Math.PI * 2 * j) / 6;
+                    collectParticles.push({ x: u.x * GRID_SIZE + 8, y: u.y * GRID_SIZE + 8,
+                        vx: Math.cos(a) * 2, vy: Math.sin(a) * 2, life: 1, color: '#E0E0FF', size: 3 });
+                }
             } else {
                 killUnicorn(u);
                 continue;
@@ -1674,10 +1773,26 @@ function recordRound(won) {
     const xpEarned = timeXP + killXP + winXP;
     addXP(xpEarned);
 
+    // Award Rainbow Points
+    let rpEarned = RP_PER_MATCH;
+    rpEarned += runCollectibles * RP_PER_FOOD;
+    rpEarned += (currentWave + 1) * RP_PER_WAVE;
+    if (isBossWave && won) rpEarned += RP_BOSS_BONUS;
+    rainbowPoints += rpEarned;
+
+    // Check dog unlocks
+    for (const dog of DOGS) {
+        if (roundsPlayed >= dog.matches && !unlockedAchievements.includes('dog_' + dog.id)) {
+            unlockedAchievements.push('dog_' + dog.id);
+            unlockPopup = { text: `\uD83D\uDC36 ${dog.label} Unlocked!`, timer: 3000 };
+            playSound('unlock');
+        }
+    }
+
     // Save run summary
     lastRunStats = {
         score, time: survivalTimer, kills: runKills, wave: currentWave + 1,
-        collectibles: runCollectibles, xpEarned, won, mode: selectedGameMode,
+        collectibles: runCollectibles, xpEarned, rpEarned, won, mode: selectedGameMode,
     };
 
     if (won) {
@@ -2772,45 +2887,29 @@ function drawCompanion(companionId, cx, cy, dir, trot, companionScale) {
 function updateCompanionPositions() {
     if (!player || !player.alive) return;
 
-    // Record player pixel position in history
     const px = player.x * GRID_SIZE + GRID_SIZE / 2;
     const py = player.y * GRID_SIZE + GRID_SIZE / 2;
     playerPosHistory.push({ px, py, dir: player.dir });
-    // Keep history bounded
     if (playerPosHistory.length > 200) playerPosHistory.shift();
 
-    const comp = COMPANIONS.find(c => c.id === selectedCompanionId);
-    if (!comp || comp.type === 'none') return;
-
-    // How many companions to draw (dogs get multiple based on unlocks)
-    const count = (comp.type === 'dog') ? getUnlockedDogCount() : 1;
-    if (count === 0) return;
-
-    // Ensure visual state array is right size
-    while (companionVisuals.length < count) {
+    // Always have 1 visual slot for the dog
+    if (companionVisuals.length < 1) {
         companionVisuals.push({ x: px, y: py, dir: player.dir });
     }
 
-    // Update each companion via delayed history + perpendicular offset + lerp
-    for (let i = 0; i < count; i++) {
-        const delay = COMPANION_FOLLOW_DELAY * (1 + i * 0.7);
-        const histIdx = Math.max(0, playerPosHistory.length - 1 - Math.floor(delay));
-        const target = playerPosHistory[histIdx] || { px, py, dir: player.dir };
+    const delay = COMPANION_FOLLOW_DELAY;
+    const histIdx = Math.max(0, playerPosHistory.length - 1 - delay);
+    const target = playerPosHistory[histIdx] || { px, py, dir: player.dir };
 
-        // Perpendicular offset: alternate left/right
-        const side = (i % 2 === 0) ? 1 : -1;
-        const offset = COMPANION_OFFSET_PX * side;
-        const { dx, dy } = dirToDelta(target.dir);
-        // Perpendicular is (-dy, dx)
-        const offX = target.px + (-dy) * offset;
-        const offY = target.py + (dx) * offset;
+    // Offset to the left side of the path
+    const { dx, dy } = dirToDelta(target.dir);
+    const offX = target.px + (-dy) * COMPANION_OFFSET_PX;
+    const offY = target.py + (dx) * COMPANION_OFFSET_PX;
 
-        // Smooth interpolation
-        const cv = companionVisuals[i];
-        cv.x += (offX - cv.x) * COMPANION_LERP_SPEED;
-        cv.y += (offY - cv.y) * COMPANION_LERP_SPEED;
-        cv.dir = target.dir;
-    }
+    const cv = companionVisuals[0];
+    cv.x += (offX - cv.x) * COMPANION_LERP_SPEED;
+    cv.y += (offY - cv.y) * COMPANION_LERP_SPEED;
+    cv.dir = target.dir;
 }
 
 function drawAllUnicorns() {
@@ -2819,32 +2918,36 @@ function drawAllUnicorns() {
     }
     if (player) {
         drawUnicorn(player);
-        // Draw companions using history-based following
-        if (selectedCompanionId && selectedCompanionId !== 'none' && player.alive) {
-            const comp = COMPANIONS.find(c => c.id === selectedCompanionId);
-            const count = (comp && comp.type === 'dog') ? getUnlockedDogCount() : (comp && comp.type !== 'none' ? 1 : 0);
+
+        // Draw equipped dog companion following behind player
+        if (equippedDogId && equippedDogId !== 'none' && player.alive && companionVisuals.length > 0) {
+            const dog = getEquippedDog();
+            const cv = companionVisuals[0];
             const compScale = PLAYER_SCALE * 0.55;
             const now = performance.now();
-
-            for (let i = 0; i < Math.min(count, companionVisuals.length); i++) {
-                const cv = companionVisuals[i];
-                // Subtle bounce animation
-                const bounce = Math.sin(now * 0.005 + i * 2) * 1.5;
-                // Shadow
-                ctx.globalAlpha = 0.15;
-                ctx.fillStyle = '#000';
-                ctx.beginPath();
-                ctx.ellipse(cv.x, cv.y + 8 * compScale, 6 * compScale, 2 * compScale, 0, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.globalAlpha = 1;
-                // Subtle glow
-                ctx.beginPath();
-                ctx.arc(cv.x, cv.y + bounce, 10 * compScale, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(255, 255, 200, 0.08)';
-                ctx.fill();
-                // Draw the companion
-                drawCompanion(selectedCompanionId, cv.x, cv.y + bounce, cv.dir, player.trotPhase + i * 0.5, compScale);
-            }
+            // Bounce animation
+            const bounce = Math.sin(now * 0.005) * 2;
+            // Tail wag via slight horizontal oscillation
+            const wag = Math.sin(now * 0.008) * 1;
+            // Shadow
+            ctx.globalAlpha = 0.15;
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.ellipse(cv.x, cv.y + 8 * compScale, 6 * compScale, 2 * compScale, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            // Glow ring (rarity-based color)
+            const rarCol = RARITY_COLORS[dog.rarity] || '#AAA';
+            ctx.beginPath();
+            ctx.arc(cv.x + wag, cv.y + bounce, 10 * compScale, 0, Math.PI * 2);
+            ctx.fillStyle = rarCol.replace(')', ', 0.12)').replace('#', 'rgba(');
+            // Use parsed hex for glow
+            const gr = parseInt(rarCol.slice(1,3),16), gg = parseInt(rarCol.slice(3,5),16), gb = parseInt(rarCol.slice(5,7),16);
+            ctx.fillStyle = `rgba(${gr},${gg},${gb},0.12)`;
+            ctx.fill();
+            // Draw dog body using the dog's colors
+            drawCompanion('dog_brown', cv.x + wag, cv.y + bounce, cv.dir, player.trotPhase, compScale);
+            // Override colors: we draw using a temp companion entry
         }
     }
 }
@@ -3052,7 +3155,7 @@ function drawTitleScreen() {
     // Rounds played badge
     ctx.font = '15px sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText(`Wave ${currentWave + 1}  |  Rounds: ${roundsPlayed}`, CANVAS_WIDTH / 2, boxY + 155);
+    ctx.fillText(`Wave ${currentWave + 1}  |  Rounds: ${roundsPlayed}  |  \uD83C\uDF08 ${rainbowPoints}`, CANVAS_WIDTH / 2, boxY + 155);
 
     // ---- Buttons (2 rows of 2) ----
     const btnW = 250, btnH = 46, btnGap = 16;
@@ -3132,7 +3235,7 @@ function drawCustomizeScreen(delta) {
         { id: 'avatar', label: 'Unicorn' },
         { id: 'accessory', label: 'Accessory' },
         { id: 'mane', label: 'Mane' },
-        { id: 'companions', label: 'Pals' },
+        { id: 'dogs', label: 'Dogs' },
     ];
     const tabW = 130, tabH = 34, tabGap = 8;
     const tabTotalW = tabs.length * (tabW + tabGap) - tabGap;
@@ -3187,36 +3290,57 @@ function drawCustomizeScreen(delta) {
 
     } else if (customizeTab === 'accessory') {
         ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#FFD700';
-        ctx.fillText('Choose an Accessory', CANVAS_WIDTH / 2, contentY);
-        const accW = 80, accH = 80, accGap = 10;
+        ctx.fillText('Accessory Shop', CANVAS_WIDTH / 2, contentY);
+        ctx.font = '14px sans-serif'; ctx.fillStyle = '#E0B0FF';
+        ctx.fillText(`\uD83C\uDF08 Rainbow Points: ${rainbowPoints}`, CANVAS_WIDTH / 2, contentY + 18);
+        const accW = 85, accH = 95, accGap = 8;
         const accsPerRow = 8;
         const accTotalW = Math.min(ACCESSORIES.length, accsPerRow) * (accW + accGap) - accGap;
         const accSx = (CANVAS_WIDTH - accTotalW) / 2;
         for (let i = 0; i < ACCESSORIES.length; i++) {
             const acc = ACCESSORIES[i];
+            const shop = ACCESSORY_SHOP[acc.id] || { cost: 0, rarity: 'common' };
+            const owned = isAccessoryOwned(acc.id);
             const row = Math.floor(i / accsPerRow), col = i % accsPerRow;
             const bx = accSx + col * (accW + accGap);
-            const by = contentY + 20 + row * (accH + accGap + 8);
+            const by = contentY + 34 + row * (accH + accGap + 4);
             const isSel = selectedAccessoryId === acc.id;
             customBtns.push({ x: bx, y: by, w: accW, h: accH, action: 'accessory', accessoryId: acc.id });
             roundRect(ctx, bx, by, accW, accH, 8);
             ctx.fillStyle = isSel ? 'rgba(255, 215, 0, 0.25)' : 'rgba(0,0,0,0.3)'; ctx.fill();
             if (isSel) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.stroke(); }
+            // Rarity bar
+            ctx.fillStyle = RARITY_COLORS[shop.rarity] || '#AAA';
+            roundRect(ctx, bx, by, accW, 3, [3,3,0,0]); ctx.fill();
+            // Image
             if (acc.path) {
                 const img = imgCache['acc_' + acc.id];
                 if (img && img.complete) {
                     ctx.imageSmoothingEnabled = false;
-                    const ps = 44;
+                    const ps = 38;
                     const aspect = img.height / img.width;
+                    if (!owned) ctx.globalAlpha = 0.4;
                     ctx.drawImage(img, bx + (accW - ps) / 2, by + 6, ps, ps * aspect);
+                    ctx.globalAlpha = 1;
                     ctx.imageSmoothingEnabled = true;
                 }
             } else {
-                ctx.font = '20px sans-serif'; ctx.fillStyle = '#888';
-                ctx.fillText('--', bx + accW / 2, by + 32);
+                ctx.font = '18px sans-serif'; ctx.fillStyle = '#888';
+                ctx.fillText('--', bx + accW / 2, by + 28);
             }
-            ctx.font = '9px sans-serif'; ctx.fillStyle = isSel ? '#FFD700' : '#AAA'; ctx.textBaseline = 'bottom';
-            ctx.fillText(acc.label, bx + accW / 2, by + accH - 3); ctx.textBaseline = 'middle';
+            // Label
+            ctx.font = '8px sans-serif'; ctx.fillStyle = isSel ? '#FFD700' : '#BBB'; ctx.textBaseline = 'bottom';
+            ctx.fillText(acc.label, bx + accW / 2, by + accH - 14); ctx.textBaseline = 'middle';
+            // Cost or status
+            if (owned) {
+                if (isSel) { ctx.font = 'bold 8px sans-serif'; ctx.fillStyle = '#FFD700'; ctx.fillText('EQUIPPED', bx + accW / 2, by + accH - 5); }
+                else { ctx.font = '8px sans-serif'; ctx.fillStyle = '#6BCB77'; ctx.fillText('Owned', bx + accW / 2, by + accH - 5); }
+            } else {
+                const canAfford = rainbowPoints >= shop.cost;
+                ctx.font = 'bold 9px sans-serif';
+                ctx.fillStyle = canAfford ? '#FFD700' : '#FF6B6B';
+                ctx.fillText(`\uD83C\uDF08 ${shop.cost}`, bx + accW / 2, by + accH - 5);
+            }
         }
 
     } else if (customizeTab === 'mane') {
@@ -3275,39 +3399,54 @@ function drawCustomizeScreen(delta) {
             ctx.fillText(HAIRSTYLES[i].label, bx + hsW / 2, by + hsH / 2);
         }
 
-    } else if (customizeTab === 'companions') {
+    } else if (customizeTab === 'dogs') {
         ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#FFD700';
-        ctx.fillText('Choose a Companion (Free!)', CANVAS_WIDTH / 2, contentY);
-        const cw = 130, ch = 110, cg = 12;
-        const compPerRow = 4;
-        const cTotalW = Math.min(COMPANIONS.length, compPerRow) * (cw + cg) - cg;
-        const csx = (CANVAS_WIDTH - cTotalW) / 2;
+        ctx.fillText('Dogs (unlock by playing matches)', CANVAS_WIDTH / 2, contentY);
+        const dw = 160, dh = 100, dg = 12;
+        const dogsPerRow = 3;
+        const dTotalW = Math.min(DOGS.length, dogsPerRow) * (dw + dg) - dg;
+        const dsx = (CANVAS_WIDTH - dTotalW) / 2;
 
-        for (let i = 0; i < COMPANIONS.length; i++) {
-            const row = Math.floor(i / compPerRow), col = i % compPerRow;
-            const bx = csx + col * (cw + cg);
-            const by = contentY + 20 + row * (ch + cg + 10);
-            const comp = COMPANIONS[i];
-            const isSel = selectedCompanionId === comp.id;
-            customBtns.push({ x: bx, y: by, w: cw, h: ch, action: 'companion', companionId: comp.id });
+        for (let i = 0; i < DOGS.length; i++) {
+            const row = Math.floor(i / dogsPerRow), col = i % dogsPerRow;
+            const bx = dsx + col * (dw + dg);
+            const by = contentY + 20 + row * (dh + dg + 8);
+            const dog = DOGS[i];
+            const unlocked = isDogUnlocked(dog);
+            const isSel = equippedDogId === dog.id;
+            customBtns.push({ x: bx, y: by, w: dw, h: dh, action: 'dog', dogId: dog.id });
 
-            roundRect(ctx, bx, by, cw, ch, 8);
-            ctx.fillStyle = isSel ? 'rgba(255, 215, 0, 0.2)' : 'rgba(0,0,0,0.3)'; ctx.fill();
-            if (isSel) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.stroke(); }
+            roundRect(ctx, bx, by, dw, dh, 8);
+            ctx.fillStyle = isSel ? 'rgba(255, 215, 0, 0.25)' : 'rgba(0,0,0,0.3)'; ctx.fill();
+            if (isSel) { ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2.5; ctx.stroke(); }
+            // Rarity bar
+            ctx.fillStyle = RARITY_COLORS[dog.rarity];
+            roundRect(ctx, bx, by, dw, 3, [3,3,0,0]); ctx.fill();
 
-            // Preview
-            if (comp.type !== 'none') {
-                ctx.save(); ctx.translate(bx + cw / 2, by + 45);
-                drawCompanion(comp.id, 0, 0, 'right', customizePreviewTrot, 1.5);
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            if (unlocked) {
+                // Dog preview
+                ctx.save(); ctx.translate(bx + 35, by + 45);
+                drawCompanion('dog_brown', 0, 0, 'right', customizePreviewTrot, 1.2);
                 ctx.restore();
+                // Name + buff
+                ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = '#FFF';
+                ctx.fillText(dog.label, bx + dw / 2 + 20, by + 30);
+                ctx.font = '11px sans-serif'; ctx.fillStyle = RARITY_COLORS[dog.rarity];
+                ctx.fillText(dog.buffDesc, bx + dw / 2 + 20, by + 48);
+                if (isSel) {
+                    ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#FFD700';
+                    ctx.fillText('EQUIPPED', bx + dw / 2 + 20, by + 64);
+                }
             } else {
-                ctx.font = '22px sans-serif'; ctx.fillStyle = '#888'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillText('--', bx + cw / 2, by + 45);
+                ctx.fillStyle = 'rgba(0,0,0,0.5)'; roundRect(ctx, bx, by, dw, dh, 8); ctx.fill();
+                ctx.font = '16px sans-serif'; ctx.fillStyle = '#888';
+                ctx.fillText('\uD83D\uDD12', bx + dw / 2, by + 35);
+                ctx.font = '11px sans-serif'; ctx.fillStyle = '#AAA';
+                ctx.fillText(`${dog.matches} matches to unlock`, bx + dw / 2, by + 58);
+                ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#CCC';
+                ctx.fillText(dog.label, bx + dw / 2, by + dh - 12);
             }
-            ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#FFF'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-            ctx.fillText(comp.label, bx + cw / 2, by + ch - 5);
-            if (isSel) { ctx.fillStyle = '#FFD700'; ctx.font = 'bold 10px sans-serif';
-                ctx.fillText('SELECTED', bx + cw / 2, by + ch - 17); }
         }
     }
 
@@ -3609,6 +3748,7 @@ function drawRunSummaryScreen(delta) {
         { label: 'Defeats', value: String(s.kills), color: '#FF6B6B' },
         { label: 'Collected', value: String(s.collectibles), color: '#C77DFF' },
         { label: 'XP Earned', value: `+${s.xpEarned}`, color: '#6BCB77' },
+        { label: '\uD83C\uDF08 Points', value: `+${s.rpEarned || 0}`, color: '#E0B0FF' },
         { label: 'Mode', value: (GAME_MODES.find(m => m.id === s.mode) || {}).label || s.mode, color: '#4FC3F7' },
     ];
 
@@ -3697,10 +3837,12 @@ function updateGame(delta) {
     survivalTimer += delta;
     moveAccumulator += delta;
 
-    // Speed boost + hat modifiers
-    const wizResist = getHatBuff().speedResist || 0;
-    const rainbowSpeed = getHatBuff().speedBonus || 0;
-    let effectiveInterval = waveMoveInterval * (1 + wizResist) * (1 - rainbowSpeed);
+    // Speed boost: hat + accessory + dog modifiers
+    const accBuff = getAccessoryBuff();
+    const dogBuff = getDogBuff();
+    const wizResist = (accBuff.speedResist || 0);
+    const speedBonus = (accBuff.speedBonus || 0) + (dogBuff.speedBonus || 0);
+    let effectiveInterval = waveMoveInterval * (1 + wizResist) * (1 - speedBonus);
     if (activePowerup && activePowerup.type.id === 'speed') effectiveInterval *= 0.6;
 
     for (const u of unicorns) {
