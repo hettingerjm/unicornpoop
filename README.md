@@ -1,85 +1,80 @@
 # Unicorn Poop
 
-A rainbow trail game for the whole family! Control a magical unicorn and outlast the NPC unicorns while avoiding all the rainbow poop trails.
+A rainbow trail arena by Sophia and John. Pick your unicorn, bring a pup, and outlast your rivals.
 
-## How to Run
+## Run on a new computer
 
-### macOS
-Double-click `index.html` or run:
+The game has no dependencies or build step. From this folder, run:
+
 ```bash
-open index.html
+python3 -m http.server 8000 --bind 127.0.0.1
 ```
-If that has issues, use a local server:
-```bash
-cd "Unicorn Poop"
-python3 -m http.server 8000
-```
-Then open http://localhost:8000 in your browser.
 
-### Mobile (iPhone / Android)
-Serve the files from your Mac and open on your phone:
-```bash
-cd "Unicorn Poop"
-python3 -m http.server 8000 --bind 0.0.0.0
-```
-Then on your phone, open `http://<your-mac-ip>:8000` (both devices must be on the same Wi-Fi). The game auto-detects touch and shows an on-screen d-pad.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in a browser. Keep using the same browser and address to keep your local progress. GitHub authentication is only needed to publish code changes.
 
-## How to Play
+For a phone on the same Wi-Fi, serve with `python3 -m http.server 8000 --bind 0.0.0.0` and open `http://<your-mac-ip>:8000`. Menus work in portrait; rotate to landscape for the arena.
 
-- **You** are the white unicorn with the golden glow
-- Move around and leave rainbow poop behind you
-- **Avoid** hitting any poop trail (yours or theirs) and the walls
-- **Outlast** all NPC unicorns to win!
-- When an NPC crashes, its trail fades away
+## Play
+
+- Your unicorn has a gold ring and a **YOU** label at the start.
+- Fresh trails show soft dots and can be crossed for **0.9 seconds**. Solid tiles are dangerous. Revisiting a trail does not refresh its safe window.
+- Avoid walls and other unicorns' heads. Dead rivals' trails fade out.
+- Win to advance. After a loss, retry the same wave, or choose an unlocked starting wave on the home screen.
+- Collect stars, gems, and hearts for score and multiplier boosts. Every three pickups earn a Rainbow Point. Winning gives extra points.
+- Dogs unlock through matches and each has its own perk. Accessories are purchased with Rainbow Points.
+
+Open **How to play → Practice arena** for a guided, nonlethal introduction. Practice does not award match rewards or spend your progress.
 
 ## Controls
 
-### Keyboard (desktop)
-| Key | Action |
-|-----|--------|
-| Arrow Keys / WASD | Move |
-| Esc / P | Pause |
+| Keyboard | Action |
+|---|---|
+| Arrow keys / WASD | Steer; queue up to two turns |
+| Space / Shift | Burst: faster movement and a wide trail |
+| X / Z | Splat: hardened poop behind you, plus Burst when ready |
+| Esc / P | Pause / resume |
 | M | Toggle sound |
 | F | Toggle fullscreen |
-| Enter / Space | Start game / Return to menu |
-| R | Quick restart (from game over or win) |
+| Enter | Start / view rewards / return home |
+| R | Retry or play the next wave after a round |
 
-### Touch (mobile)
-| Action | How |
-|--------|-----|
-| Move | D-pad (bottom-left) or swipe anywhere |
-| Start / Restart | Tap the screen |
-| Pause | Tap the pause button (top-right) |
-| Resume | Tap anywhere |
-| Toggle sound | Tap the sound button (top-right) |
+On touchscreens, swipe to steer and tap the ability buttons. An optional D-pad is available in Settings. Switching away from the game automatically pauses it.
 
-## Project Structure
+## Modes
 
-```
-index.html  - HTML shell with canvas element
-style.css   - Layout, centering, fullscreen support
-game.js     - All game logic (~700 lines)
-README.md   - This file
-```
+- **Classic:** progressive waves.
+- **Chill:** slower movement.
+- **Speed:** faster movement.
+- **Boss Rush:** a boss every wave.
+- **Score Attack:** survive for 60 seconds; defeated rivals return. Personal bests are saved per mode.
 
-## Tweaking Gameplay
+## Saves and comfort
 
-Open `game.js` and edit the **SETTINGS** section at the very top:
+In **Settings & saves**, export a JSON save and load it on another computer. This includes unlocks, currency, selected equipment, highest unlocked wave, and personal bests. Loading replaces the receiving browser's game progress. Older game saves migrate automatically. Invalid imported files leave existing progress intact.
 
-```js
-const GRID_SIZE = 16;             // Cell size in pixels (smaller = more cells)
-const MOVE_INTERVAL = 100;        // Ms between moves (lower = faster)
-const NPC_COUNT = 3;              // Number of NPC unicorns (1-4)
-const COUNTDOWN_SECONDS = 3;      // Pre-game countdown length
-const TRAIL_FADE_DURATION = 1500; // How long dead NPC trails take to fade (ms)
-const NPC_LOOKAHEAD = 5;          // How smart NPCs are (higher = smarter)
-const NPC_MISTAKE_CHANCE = 0.04;  // How often NPCs make random moves (0-1)
+Settings also offers reduced motion and an optional touch D-pad. Saves are local to your browser; there is no account or cloud sync.
+
+## Project
+
+```text
+index.html             HTML shell and menu surfaces
+style.css              Responsive menus, arena controls, and visual design
+game.js                Simulation, collisions, rendering, audio, and save data
+ui.js                  Native menus, practice guide, live HUD, and save transfer
+assets/                Unicorn and accessory artwork
+tests/game.test.cjs    Engine regression checks
 ```
 
-## Tech
+The engine uses a fixed simulation clock and independent movement timers for each unicorn. Visual interpolation smooths movement without changing the collision grid. Pausing freezes trail aging; speed perks affect only the player. Burst shares ordinary movement's collision and perk rules.
 
-- Pure HTML + CSS + vanilla JavaScript
-- Canvas API for rendering
-- Web Audio API for sound effects (no audio files)
-- Responsive layout with mobile touch support (d-pad + swipe)
-- No frameworks, no build step, no dependencies
+## Development checks
+
+Optional: with Node.js installed, run:
+
+```bash
+node --test tests/game.test.cjs
+```
+
+The tests exercise the actual engine with drawing/audio mocked: refresh-rate-independent scoring, paused trail aging, loop prevention, buffered turns, head collisions, burst/ghost interactions, crash saves, bosses, Score Attack, practice, and save migration.
+
+Static assets have a version query in `index.html`; bump it when shipping changes so browsers fetch a consistent set of scripts and styles.

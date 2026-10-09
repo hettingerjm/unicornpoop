@@ -14,7 +14,7 @@ const TRAIL_FADE_DURATION = 1500;   // ms for dead NPC trail to fade out
 const NPC_LOOKAHEAD = 5;            // how far NPCs look ahead
 const NPC_MISTAKE_CHANCE = 0.04;    // chance NPC picks a random direction
 const SOUND_ENABLED_DEFAULT = true;
-const BG_COLOR = '#2d1b4e';         // dark purple background
+const BG_COLOR = '#20152f';         // dark purple background
 const GRID_LINE_COLOR = 'rgba(255, 255, 255, 0.03)';
 
 // ---- MOBILE SCALE ----
@@ -244,7 +244,7 @@ const ACCESSORY_SHOP = {
     'flower_crown':       { cost: 10,  rarity: 'common',    buff: null, buffDesc: 'Pretty!' },
     'sunglasses_square':  { cost: 25,  rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
     'sunglasses_angled':  { cost: 25,  rarity: 'rare',      buff: { speedBonus: 0.03 }, buffDesc: '+3% speed' },
-    'halo':               { cost: 80,  rarity: 'legendary', buff: { bonusLife: true }, buffDesc: '+1 life every 10 waves' },
+    'halo':               { cost: 80,  rarity: 'legendary', buff: { bonusLife: true }, buffDesc: '1 crash save on waves 10, 20…' },
     'headphones_blue':    { cost: 15,  rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
     'headphones_pink':    { cost: 15,  rarity: 'common',    buff: null, buffDesc: 'Vibes!' },
     'bow':                { cost: 10,  rarity: 'common',    buff: null, buffDesc: 'Cute!' },
@@ -547,66 +547,90 @@ let unlockPopup = null;       // {text, timer}
 const INSTRUCTIONS = 'INSTRUCTIONS';
 
 // ---- RUN SUMMARY STATE ----
+let gameTime = 1;                  // Simulation clock; pauses freeze hazards too.
+let simulationAccumulator = 0;
+const SIMULATION_STEP = 10;
+let roundRecorded = false;
+let haloLifeUsed = false;
+let lastCrash = null;
+let turnQueue = [];
+let practiceActive = false;
+let practiceReturnWave = 0;
+let practiceProgress = { turns: 0, collected: false, burst: false, splat: false };
+let bestScores = {};
+let reducedMotion = false;
+let saveError = false;
 let lastRunStats = null;     // {score, time, kills, wave, collectibles, xpEarned}
 
 // Load saved customization from localStorage
+function normalizeSaveData(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Choose a Unicorn Poop save file.');
+    if (data.version != null && data.version !== 2) throw new Error('This save version is not supported.');
+    if (!('rounds' in data) || !('avatarId' in data || 'colorIndex' in data)) throw new Error('This is not a Unicorn Poop save.');
+    const number = (key, fallback, max) => Number.isFinite(data[key]) ? Math.max(0, Math.min(max, Math.floor(data[key]))) : fallback;
+    const id = (key, items, fallback) => items.some(item => item.id === data[key]) ? data[key] : fallback;
+    const owned = ['none', ...ACCESSORIES.filter(a => Array.isArray(data.ownedAccessories) && data.ownedAccessories.includes(a.id)).map(a => a.id)];
+    const rounds = number('rounds', 0, 1000000);
+    const dog = DOGS.find(d => d.id === data.equippedDogId && rounds >= d.matches) || DOGS[0];
+    const accessory = id('accessoryId', ACCESSORIES, 'none');
+    const scores = {};
+    for (const mode of GAME_MODES) {
+        const value = data.bestScores && data.bestScores[mode.id];
+        if (Number.isFinite(value) && value >= 0) scores[mode.id] = Math.min(1000000000, Math.floor(value));
+    }
+    return {
+        version: 2, colorIndex: number('colorIndex', 0, PLAYER_COLORS.length - 1),
+        hatId: id('hatId', HATS, 'crown'), rounds,
+        companionId: id('companionId', COMPANIONS, 'none'),
+        hairstyle: id('hairstyle', HAIRSTYLES, 'flowing'),
+        maneColors: Array.isArray(data.maneColors) && data.maneColors.length >= MANE_STRANDS && data.maneColors.every(c => typeof c === 'string' && /^#[\da-f]{6}$/i.test(c)) ? data.maneColors.slice(0, 10) : selectedManeColors,
+        xp: number('xp', 0, xpForLevel(MAX_LEVEL)), level: Math.max(1, number('level', 1, MAX_LEVEL)),
+        totalKills: number('totalKills', 0, 1000000),
+        achievements: Array.isArray(data.achievements) ? data.achievements.filter(a => ACHIEVEMENTS.some(item => item.id === a) || DOGS.some(d => 'dog_' + d.id === a)) : [],
+        modesWon: GAME_MODES.filter(m => Array.isArray(data.modesWon) && data.modesWon.includes(m.id)).map(m => m.id),
+        gameMode: id('gameMode', GAME_MODES, 'classic'), avatarId: id('avatarId', UNICORN_AVATARS, 'classic'),
+        accessoryId: owned.includes(accessory) ? accessory : 'none', equippedDogId: dog.id,
+        rainbowPoints: number('rainbowPoints', 0, 1000000), ownedAccessories: [...new Set(owned)],
+        highestWave: number('highestWave', 0, 999), tutorialCompleted: data.tutorialCompleted === true,
+        showDpad: data.showDpad === true, reducedMotion: data.reducedMotion === true, bestScores: scores,
+    };
+}
+
+function applySaveData(data) {
+    const d = normalizeSaveData(data);
+    selectedColorIndex = d.colorIndex; selectedHatId = d.hatId; roundsPlayed = d.rounds;
+    selectedCompanionId = d.companionId; selectedHairstyle = d.hairstyle; selectedManeColors = d.maneColors;
+    playerXP = d.xp; playerLevel = d.level; totalKills = d.totalKills;
+    unlockedAchievements = d.achievements; modesWon = d.modesWon; selectedGameMode = d.gameMode;
+    selectedAvatarId = d.avatarId; selectedAccessoryId = d.accessoryId; equippedDogId = d.equippedDogId;
+    rainbowPoints = d.rainbowPoints; ownedAccessories = d.ownedAccessories; highestWave = d.highestWave;
+    tutorialCompleted = d.tutorialCompleted; showDpad = d.showDpad; reducedMotion = d.reducedMotion;
+    bestScores = d.bestScores;
+    applyPlayerColor(); applyManeColors();
+}
+
 function loadSaveData() {
     try {
-        const data = JSON.parse(localStorage.getItem('unicornPoop'));
-        if (data) {
-            if (typeof data.colorIndex === 'number' && data.colorIndex < PLAYER_COLORS.length) selectedColorIndex = data.colorIndex;
-            if (typeof data.hatId === 'string') selectedHatId = data.hatId;
-            if (typeof data.rounds === 'number') roundsPlayed = data.rounds;
-            if (typeof data.companionId === 'string') selectedCompanionId = data.companionId;
-            if (typeof data.hairstyle === 'string') selectedHairstyle = data.hairstyle;
-            if (Array.isArray(data.maneColors) && data.maneColors.length >= MANE_STRANDS) {
-                selectedManeColors = data.maneColors;
-            }
-            if (typeof data.xp === 'number') playerXP = data.xp;
-            if (typeof data.level === 'number') playerLevel = data.level;
-            if (typeof data.totalKills === 'number') totalKills = data.totalKills;
-            if (Array.isArray(data.achievements)) unlockedAchievements = data.achievements;
-            if (Array.isArray(data.modesWon)) modesWon = data.modesWon;
-            if (typeof data.gameMode === 'string') selectedGameMode = data.gameMode;
-            if (typeof data.avatarId === 'string') selectedAvatarId = data.avatarId;
-            if (typeof data.accessoryId === 'string') selectedAccessoryId = data.accessoryId;
-            if (typeof data.equippedDogId === 'string') equippedDogId = data.equippedDogId;
-            if (typeof data.rainbowPoints === 'number') rainbowPoints = data.rainbowPoints;
-            if (Array.isArray(data.ownedAccessories)) ownedAccessories = data.ownedAccessories;
-            if (typeof data.highestWave === 'number') highestWave = data.highestWave;
-            if (typeof data.tutorialCompleted === 'boolean') tutorialCompleted = data.tutorialCompleted;
-            if (typeof data.showDpad === 'boolean') showDpad = data.showDpad;
-        }
-    } catch (e) {}
-    applyPlayerColor();
-    applyManeColors();
+        const raw = localStorage.getItem('unicornPoop');
+        if (raw) applySaveData(JSON.parse(raw));
+    } catch (e) { saveError = true; }
+    applyPlayerColor(); applyManeColors();
+}
+
+function getSaveData() {
+    return {
+        version: 2, colorIndex: selectedColorIndex, hatId: selectedHatId, rounds: roundsPlayed,
+        companionId: selectedCompanionId, hairstyle: selectedHairstyle, maneColors: selectedManeColors,
+        xp: playerXP, level: playerLevel, totalKills, achievements: unlockedAchievements,
+        modesWon, gameMode: selectedGameMode, avatarId: selectedAvatarId, accessoryId: selectedAccessoryId,
+        equippedDogId, rainbowPoints, ownedAccessories, highestWave, tutorialCompleted, showDpad,
+        bestScores, reducedMotion,
+    };
 }
 
 function saveSaveData() {
-    try {
-        localStorage.setItem('unicornPoop', JSON.stringify({
-            colorIndex: selectedColorIndex,
-            hatId: selectedHatId,
-            rounds: roundsPlayed,
-            companionId: selectedCompanionId,
-            hairstyle: selectedHairstyle,
-            maneColors: selectedManeColors,
-            xp: playerXP,
-            level: playerLevel,
-            totalKills: totalKills,
-            achievements: unlockedAchievements,
-            modesWon: modesWon,
-            gameMode: selectedGameMode,
-            avatarId: selectedAvatarId,
-            accessoryId: selectedAccessoryId,
-            equippedDogId: equippedDogId,
-            rainbowPoints: rainbowPoints,
-            ownedAccessories: ownedAccessories,
-            highestWave: highestWave,
-            tutorialCompleted: tutorialCompleted,
-            showDpad: showDpad,
-        }));
-    } catch (e) {}
+    try { localStorage.setItem('unicornPoop', JSON.stringify(getSaveData())); saveError = false; }
+    catch (e) { saveError = true; }
 }
 
 function applyManeColors() {
@@ -835,6 +859,8 @@ function removeTrailFromGrid(unicorn) {
 function createUnicorn(id, x, y, direction, isPlayer, hueStart, theme) {
     return {
         id, x, y,
+        previousX: x, previousY: y, moveElapsed: 0, lastMoveTime: gameTime, moveDuration: 110,
+        invulnerableUntil: 0,
         dir: direction,
         nextDir: direction,
         isPlayer,
@@ -851,6 +877,13 @@ function createUnicorn(id, x, y, direction, isPlayer, hueStart, theme) {
 }
 
 function spawnUnicorns() {
+    gameTime = 1;
+    simulationAccumulator = 0;
+    turnQueue = [];
+    roundRecorded = false;
+    haloLifeUsed = false;
+    lastCrash = null;
+    practiceProgress = { turns: 0, collected: false, burst: false, splat: false };
     unicorns = [];
     collectibles = [];
     powerups = [];
@@ -887,7 +920,7 @@ function spawnUnicorns() {
     applyWave();
 
     // Apply game mode speed modifier
-    const mode = GAME_MODES.find(m => m.id === selectedGameMode) || GAME_MODES[0];
+    const mode = practiceActive ? GAME_MODES.find(m => m.id === 'chill') : GAME_MODES.find(m => m.id === selectedGameMode) || GAME_MODES[0];
     waveMoveInterval = Math.round(waveMoveInterval * mode.speedMod);
 
     const px = Math.floor(COLS * 0.15);
@@ -896,8 +929,8 @@ function spawnUnicorns() {
     unicorns.push(player);
 
     // Determine if this is a boss wave
-    isBossWave = (selectedGameMode === 'bossrush') ||
-                 ((currentWave + 1) % BOSS_WAVE_INTERVAL === 0 && currentWave > 0);
+    isBossWave = !practiceActive && ((selectedGameMode === 'bossrush') ||
+                 ((currentWave + 1) % BOSS_WAVE_INTERVAL === 0 && currentWave > 0));
 
     if (isBossWave) {
         spawnBoss();
@@ -911,21 +944,25 @@ function spawnUnicorns() {
             { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.85), dir: 'up' },
         ];
 
-        const npcCount = waveNpcCount;
+        const npcCount = practiceActive ? 0 : waveNpcCount;
         for (let i = 0; i < npcCount && i < spawnPoints.length; i++) {
             const sp = spawnPoints[i];
             const hueStart = (i + 1) * 70;
             const npc = createUnicorn(`npc${i}`, sp.x, sp.y, sp.dir, false, hueStart, NPC_THEMES[i % NPC_THEMES.length]);
+            npc.avatarId = ['candy', 'ice', 'neon', 'royal', 'shadow', 'candy'][i];
             unicorns.push(npc);
         }
     }
 
     // Pre-seed the map with collectibles so it feels lively from the start
-    for (let i = 0; i < 16; i++) spawnCollectible();
+    for (let i = 0; i < 12; i++) spawnCollectible();
+    if (practiceActive) collectibles.unshift({ x: px + 7, y: py, type: COLLECTIBLE_TYPES[0], spawnTime: gameTime });
 }
 
 // ---- INPUT HANDLING ----
 document.addEventListener('keydown', (e) => {
+    if (e.target && e.target.closest && e.target.closest('input, select, textarea')) return;
+    if (e.target && e.target.closest && e.target.closest('button') && (e.key === 'Enter' || e.key === ' ')) return;
     initAudio();
 
     if (e.key === 'm' || e.key === 'M') { soundEnabled = !soundEnabled; return; }
@@ -977,17 +1014,17 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-function setPlayerDirection(key) {
-    const keyMap = {
-        'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right',
-        'w': 'up', 'W': 'up', 's': 'down', 'S': 'down',
-        'a': 'left', 'A': 'left', 'd': 'right', 'D': 'right',
-    };
-    const newDir = keyMap[key];
+function queueDirection(newDir) {
     if (!newDir || !player || !player.alive) return;
-    if (newDir === OPPOSITES[player.dir]) return;
-    if (newDir !== player.dir) lastDirChangeTime = performance.now();
-    player.nextDir = newDir;
+    const pending = turnQueue.length ? turnQueue[turnQueue.length - 1] : player.dir;
+    if (newDir === pending || newDir === OPPOSITES[pending] || turnQueue.length >= 2) return;
+    turnQueue.push(newDir);
+    player.nextDir = turnQueue[0];
+}
+
+function setPlayerDirection(key) {
+    const map = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right' };
+    queueDirection(map[key] || map[key.toLowerCase()]);
 }
 
 function togglePause() {
@@ -1000,29 +1037,16 @@ function togglePause() {
 }
 
 function toggleFullscreen() {
-    if (!document.fullscreenElement) {
-        // Try standard Fullscreen API (works on Android/desktop)
-        const el = document.documentElement;
-        const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
-        if (rfs) {
-            rfs.call(el).catch(() => {});
-            document.body.classList.add('fullscreen');
-            isFullscreen = true;
-        }
-    } else {
-        const efs = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
-        if (efs) efs.call(document).catch(() => {});
-        document.body.classList.remove('fullscreen');
-        isFullscreen = false;
-    }
-    setTimeout(resizeCanvas, 200);
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    const target = active ? document : document.documentElement;
+    const method = active ? document.exitFullscreen || document.webkitExitFullscreen : target.requestFullscreen || target.webkitRequestFullscreen;
+    if (!method) return;
+    Promise.resolve(method.call(target)).then(resizeCanvas).catch(() => {});
 }
 
 document.addEventListener('fullscreenchange', () => {
-    if (!document.fullscreenElement) {
-        document.body.classList.remove('fullscreen');
-        isFullscreen = false;
-    }
+    isFullscreen = Boolean(document.fullscreenElement);
+    resizeCanvas();
 });
 
 // ---- TOUCH INPUT ----
@@ -1045,7 +1069,7 @@ function handleTouchDirection(canvasX, canvasY) {
         let dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
         activeTouchDir = dir;
         if (player && player.alive && gameState === PLAYING) {
-            if (dir !== OPPOSITES[player.dir]) player.nextDir = dir;
+            queueDirection(dir);
         }
         return true;
     }
@@ -1053,6 +1077,7 @@ function handleTouchDirection(canvasX, canvasY) {
 }
 
 function handleTouchButton(canvasX, canvasY) {
+    if (typeof syncGameUI === 'function') return false;
     const pdx = canvasX - touchPauseBtn.x;
     const pdy = canvasY - touchPauseBtn.y;
     if (pdx * pdx + pdy * pdy < touchPauseBtn.r * touchPauseBtn.r * 4) {
@@ -1083,6 +1108,7 @@ function handleTouchButton(canvasX, canvasY) {
 }
 
 let swipeStartX = 0, swipeStartY = 0, swipeStartTime = 0;
+let gestureTurned = false;
 const SWIPE_THRESHOLD = 30;
 
 canvas.addEventListener('touchstart', (e) => {
@@ -1093,6 +1119,7 @@ canvas.addEventListener('touchstart', (e) => {
     swipeStartX = touch.clientX;
     swipeStartY = touch.clientY;
     swipeStartTime = performance.now();
+    gestureTurned = false;
 
     if (gameState === PLAYING) {
         if (handleTouchButton(pos.x, pos.y)) return;
@@ -1134,21 +1161,27 @@ canvas.addEventListener('touchmove', (e) => {
     if (gameState !== PLAYING || !isMobile) return;
     const touch = e.changedTouches[0];
     const pos = screenToCanvas(touch.clientX, touch.clientY);
-    handleTouchDirection(pos.x, pos.y);
+    if (showDpad && handleTouchDirection(pos.x, pos.y)) { gestureTurned = true; return; }
+    const dx = touch.clientX - swipeStartX, dy = touch.clientY - swipeStartY;
+    if (!gestureTurned && Math.max(Math.abs(dx), Math.abs(dy)) > SWIPE_THRESHOLD) {
+        queueDirection(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+        gestureTurned = true;
+        firstSwipeTime = performance.now();
+    }
 }, { passive: false });
 
 canvas.addEventListener('touchend', (e) => {
     e.preventDefault();
     activeTouchDir = null;
+    if (gestureTurned) return;
     if (gameState === PLAYING) {
         const touch = e.changedTouches[0];
         const dx = touch.clientX - swipeStartX;
         const dy = touch.clientY - swipeStartY;
-        const elapsed = performance.now() - swipeStartTime;
-        const isSwipe = elapsed < 300 && (Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(dy) > SWIPE_THRESHOLD);
+        const isSwipe = Math.abs(dx) > SWIPE_THRESHOLD || Math.abs(dy) > SWIPE_THRESHOLD;
         if (isSwipe) {
             let dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
-            if (player && player.alive && dir !== OPPOSITES[player.dir]) player.nextDir = dir;
+            queueDirection(dir);
             if (!firstSwipeTime) firstSwipeTime = performance.now();
         } else {
             // Double-tap detection for splatter
@@ -1192,7 +1225,7 @@ function resizeCanvas() {
     const isPortrait = screenH > screenW * 1.1; // 10% tolerance
 
     // Show rotate overlay on touch devices in portrait
-    if (isMobile && isPortrait && rotateOverlay) {
+    if (isMobile && isPortrait && [PLAYING, COUNTDOWN, PAUSED, GAME_OVER, WIN].includes(gameState) && rotateOverlay) {
         rotateOverlay.style.display = 'flex';
         canvas.style.display = 'none';
         return;
@@ -1204,8 +1237,8 @@ function resizeCanvas() {
 
     // Always scale to fit while preserving aspect ratio
     let displayW, displayH;
-    const availW = isMobile ? screenW : screenW - 30;
-    const availH = isMobile ? screenH : screenH - 30;
+    const availW = screenW - (isMobile ? 16 : 40);
+    const availH = screenH - (isMobile ? 120 : 150);
 
     if (availW / availH > targetRatio) {
         // Screen is wider than 16:9 — constrain by height
@@ -1225,10 +1258,11 @@ function resizeCanvas() {
         canvas.style.borderRadius = '0';
         canvas.style.boxShadow = 'none';
     } else {
-        canvas.style.border = '3px solid #444';
-        canvas.style.borderRadius = '8px';
-        canvas.style.boxShadow = '0 0 30px rgba(255, 100, 200, 0.2)';
+        canvas.style.border = '1px solid rgba(223, 194, 255, 0.22)';
+        canvas.style.borderRadius = '20px';
+        canvas.style.boxShadow = '0 24px 90px rgba(0, 0, 0, 0.35), 0 0 50px rgba(169, 113, 255, 0.08)';
     }
+    if (typeof syncGameUI === 'function') syncGameUI.boundsDirty = true;
 }
 
 window.addEventListener('resize', resizeCanvas);
@@ -1321,8 +1355,8 @@ function spawnCollectible() {
     for (let attempt = 0; attempt < 50; attempt++) {
         const x = randomInt(2, COLS - 3);
         const y = randomInt(2, ROWS - 3);
-        if (occupiedGrid[x][y] === null) {
-            collectibles.push({ x, y, type, spawnTime: performance.now() });
+        if (occupiedGrid[x][y] === null && !collectibles.some(c => c.x === x && c.y === y) && !unicorns.some(u => u.alive && u.x === x && u.y === y)) {
+            collectibles.push({ x, y, type, spawnTime: gameTime });
             return;
         }
     }
@@ -1337,9 +1371,10 @@ function checkCollectiblePickup() {
         const dy = Math.abs(c.y - player.y);
         if ((c.x === player.x && c.y === player.y) || (magnetR > 0 && dx <= magnetR && dy <= magnetR)) {
             const poopMult = 1 + (getHatBuff().poopValue || 0);
-            score += Math.floor(c.type.score * scoreMultiplier * poopMult);
+            score += c.type.score * scoreMultiplier * poopMult * (1 + getCompanionScoreBonus());
             scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + c.type.multiplierBoost);
             runCollectibles++;
+            if (practiceActive) practiceProgress.collected = true;
             lastCollectTime = performance.now();
             if (c.type.id === 'widener') { trailWidenerActive = true; trailWidenerTimer = WIDENER_DURATION; }
             playSound('collect');
@@ -1390,7 +1425,7 @@ function spawnPowerup() {
         const x = randomInt(3, COLS - 4);
         const y = randomInt(3, ROWS - 4);
         if (occupiedGrid[x][y] === null) {
-            powerups.push({ x, y, type, spawnTime: performance.now() });
+            powerups.push({ x, y, type, spawnTime: gameTime });
             return;
         }
     }
@@ -1524,9 +1559,7 @@ function damageBoss(amount) {
     playSound('boss_hit');
     if (boss.health <= 0) {
         killUnicorn(boss);
-        score += 2000;
-        runKills++;
-        checkAchievement('boss_kill');
+
     }
 }
 
@@ -1583,7 +1616,7 @@ function chooseBossDirection() {
     // Charger: lean toward player more aggressively
     const possible = getPossibleDirections(boss.dir);
     let best = []; let bestScore = -Infinity;
-    const bossNow = performance.now();
+    const bossNow = gameTime;
     for (const dir of possible) {
         const { dx, dy } = dirToDelta(dir);
         const nx = boss.x + dx, ny = boss.y + dy;
@@ -1614,7 +1647,7 @@ function triggerShake(intensity, duration) {
 }
 
 function applyShake() {
-    if (shakeTimer > 0) {
+    if (shakeTimer > 0 && !reducedMotion) {
         const ox = (Math.random() - 0.5) * shakeIntensity * 2;
         const oy = (Math.random() - 0.5) * shakeIntensity * 2;
         ctx.translate(ox, oy);
@@ -1639,6 +1672,7 @@ function addXP(amount) {
 
 // ---- ACHIEVEMENT SYSTEM ----
 function checkAchievement(id) {
+    if (practiceActive) return;
     if (unlockedAchievements.includes(id)) return;
     const ach = ACHIEVEMENTS.find(a => a.id === id);
     if (!ach) return;
@@ -1686,7 +1720,7 @@ function drawAchievementPopup(delta) {
 function scoreDirection(x, y, dir, depth) {
     const { dx, dy } = dirToDelta(dir);
     let score = 0;
-    const now = performance.now();
+    const now = gameTime;
     for (let i = 1; i <= depth; i++) {
         const nx = x + dx * i;
         const ny = y + dy * i;
@@ -1714,7 +1748,7 @@ function chooseNPCDirection(npc) {
     let best = [];
     let bestScore = -Infinity;
 
-    const now = performance.now();
+    const now = gameTime;
     for (const dir of possible) {
         const { dx, dy } = dirToDelta(dir);
         const nx = npc.x + dx;
@@ -1727,6 +1761,7 @@ function chooseNPCDirection(npc) {
             continue;
         }
         let sc = scoreDirection(npc.x, npc.y, dir, lookahead);
+        if (dir === npc.dir) sc += 0.25; // Keep a clear course when space is equally safe.
         // Aggressive personality: bonus for moving toward player
         if (p.aggressiveness > 0 && player && player.alive) {
             const distBefore = Math.abs(npc.x - player.x) + Math.abs(npc.y - player.y);
@@ -1759,8 +1794,19 @@ function chooseNPCDirection(npc) {
 }
 
 // ---- MOVEMENT & COLLISION ----
-function killUnicorn(unicorn) {
+function killUnicorn(unicorn, reason = 'Hardened trail', crashX = unicorn.x, crashY = unicorn.y) {
     if (!unicorn.alive) return;
+    if (unicorn.isPlayer && practiceActive) {
+        unicorn.invulnerableUntil = gameTime + 600;
+        return;
+    }
+    if (unicorn.isPlayer && gameTime < unicorn.invulnerableUntil) return;
+    if (unicorn.isPlayer && getAccessoryBuff().bonusLife && (currentWave + 1) % 10 === 0 && !haloLifeUsed) {
+        haloLifeUsed = true;
+        unicorn.invulnerableUntil = gameTime + 600;
+        playSound('collect');
+        return;
+    }
 
     // Boss takes damage instead of dying instantly
     if (unicorn.isBoss && unicorn.health > 1) {
@@ -1771,6 +1817,7 @@ function killUnicorn(unicorn) {
     // Shield Pup: free crash once per run
     if (unicorn.isPlayer && !dogShieldUsed && getDogBuff().freeCrash) {
         dogShieldUsed = true;
+        unicorn.invulnerableUntil = gameTime + 600;
         triggerShake(3, 150);
         playSound('collect');
         for (let j = 0; j < 8; j++) {
@@ -1784,6 +1831,7 @@ function killUnicorn(unicorn) {
     // Hat buff: cowboy hat / helmet gives one free collision per run
     if (unicorn.isPlayer && !freeHitUsed && (getHatBuff().freeHit || getAccessoryBuff().freeHit)) {
         freeHitUsed = true;
+        unicorn.invulnerableUntil = gameTime + 600;
         triggerShake(3, 150);
         playSound('collect');
         // Flash effect
@@ -1796,13 +1844,15 @@ function killUnicorn(unicorn) {
     }
 
     unicorn.alive = false;
-    unicorn.deathTime = performance.now();
+    unicorn.deathTime = gameTime;
+    if (unicorn.isPlayer) lastCrash = { reason, x: crashX, y: crashY };
 
     // Track kills and score for NPC deaths
     if (!unicorn.isPlayer) {
         runKills++;
         totalKills++;
-        score += Math.floor(SCORE_PER_KILL * scoreMultiplier);
+        score += SCORE_PER_KILL * scoreMultiplier * (1 + getCompanionScoreBonus());
+        if (unicorn.isBoss) { score += 2000; checkAchievement('boss_kill'); }
     }
 
     const cx = unicorn.x * GRID_SIZE + GRID_SIZE / 2;
@@ -1832,94 +1882,134 @@ function killUnicorn(unicorn) {
     }
 }
 
-function moveAllUnicorns() {
-    const aliveUnicorns = unicorns.filter(u => u.alive);
-    for (const u of aliveUnicorns) {
+function movementInterval(u) {
+    if (!u.isPlayer) return waveMoveInterval * (u.isBoss ? u.bossType.speed : 1);
+    const accessory = getAccessoryBuff(), dog = getDogBuff();
+    let interval = waveMoveInterval * (1 + (accessory.speedResist || 0)) * (1 - (accessory.speedBonus || 0) - (dog.speedBonus || 0));
+    if (activePowerup && activePowerup.type.id === 'speed') interval *= 0.6;
+    if (burstActive) interval *= BURST_SPEED_MULT;
+    return Math.max(25, interval);
+}
+
+function addTrailCell(u, x, y, hardened = false) {
+    if (isOutOfBounds(x, y) || occupiedGrid[x][y] !== null) return;
+    const hue = (u.hueStart + u.trail.length * 8) % 360;
+    const time = hardened ? -FRESH_POOP_DURATION : gameTime;
+    u.trail.push({ x, y, color: `hsl(${hue}, 90%, 68%)`, time });
+    occupiedGrid[x][y] = u.id;
+    trailTimeGrid[x][y] = time;
+}
+
+function canCrossTrail(u, x, y) {
+    if (occupiedGrid[x][y] === null) return true;
+    if (gameTime - trailTimeGrid[x][y] < FRESH_POOP_DURATION) return true;
+    if (u.isPlayer && (gameTime < u.invulnerableUntil || (activePowerup && activePowerup.type.id === 'ghost'))) return true;
+    if (u.isPlayer && !dogGhostUsed && getDogBuff().ghostPass) {
+        dogGhostUsed = true; playSound('collect'); return true;
+    }
+    return false;
+}
+
+function recoverDirection(u) {
+    for (const dir of Object.keys(DIR_DELTA)) {
+        const { dx, dy } = dirToDelta(dir), x = u.x + dx, y = u.y + dy;
+        if (!isOutOfBounds(x, y) && occupiedGrid[x][y] === null && !unicorns.some(other => other !== u && other.alive && other.x === x && other.y === y)) {
+            u.nextDir = dir;
+            if (u.isPlayer) turnQueue = [];
+            return;
+        }
+    }
+}
+
+function moveAllUnicorns(movers = unicorns.filter(u => u.alive)) {
+    for (const u of movers) {
         if (u.isBoss) u.nextDir = chooseBossDirection();
         else if (!u.isPlayer) u.nextDir = chooseNPCDirection(u);
+        else if (turnQueue.length) u.nextDir = turnQueue.shift();
     }
-
-    const moves = aliveUnicorns.map(u => {
+    const moves = movers.map(u => {
         const { dx, dy } = dirToDelta(u.nextDir);
-        return { unicorn: u, newX: u.x + dx, newY: u.y + dy };
+        return { unicorn: u, newX: u.x + dx, newY: u.y + dy, blocked: false };
     });
-
-    // Head-to-head check
-    for (let i = 0; i < moves.length; i++) {
-        for (let j = i + 1; j < moves.length; j++) {
-            if (moves[i].newX === moves[j].newX && moves[i].newY === moves[j].newY) {
-                killUnicorn(moves[i].unicorn);
-                killUnicorn(moves[j].unicorn);
-            }
-        }
-    }
-
-    const isGhost = activePowerup && activePowerup.type.id === 'ghost';
-
+    // Use one snapshot so a three-way crash cannot spare the last processed unicorn.
+    const heads = unicorns.filter(u => u.alive);
+    // Resolve shared destinations, swapped cells, and heads that are not moving this tick.
     for (const m of moves) {
-        if (!m.unicorn.alive) continue;
-        const u = m.unicorn;
-        u.dir = u.nextDir;
-        if (isOutOfBounds(m.newX, m.newY)) { killUnicorn(u); continue; }
-        const occupied = occupiedGrid[m.newX][m.newY];
-        if (occupied !== null) {
-            // Fresh poop is passable
-            const cellTime = trailTimeGrid[m.newX] ? trailTimeGrid[m.newX][m.newY] : 0;
-            const isFreshPoop = cellTime > 0 && (performance.now() - cellTime) < FRESH_POOP_DURATION;
-            if (isFreshPoop) {
-                // Pass through fresh poop
-            } else if (u.isPlayer && isGhost) {
-                // Ghost mode — powerup active
-            } else if (u.isPlayer && !dogGhostUsed && getDogBuff().ghostPass) {
-                dogGhostUsed = true;
-                playSound('collect');
-                // Ghost pup visual burst
-                for (let j = 0; j < 6; j++) {
-                    const a = (Math.PI * 2 * j) / 6;
-                    collectParticles.push({ x: u.x * GRID_SIZE + 8, y: u.y * GRID_SIZE + 8,
-                        vx: Math.cos(a) * 2, vy: Math.sin(a) * 2, life: 1, color: '#E0E0FF', size: 3 });
-                }
-            } else {
-                killUnicorn(u);
-                continue;
+        for (const other of heads.filter(u => u !== m.unicorn)) {
+            const next = moves.find(move => move.unicorn === other);
+            const sameCell = next && m.newX === next.newX && m.newY === next.newY;
+            const headSwap = next && m.newX === other.x && m.newY === other.y && next.newX === m.unicorn.x && next.newY === m.unicorn.y;
+            const stationaryHead = !next && m.newX === other.x && m.newY === other.y;
+            if (sameCell || headSwap || stationaryHead) {
+                m.blocked = true;
+                if (next) next.blocked = true;
+                killUnicorn(m.unicorn, 'Head-on collision', m.newX, m.newY);
+                killUnicorn(other, 'Head-on collision', other.x, other.y);
             }
         }
-        const hue = (u.hueStart + u.trail.length * 8) % 360;
-        const color = `hsl(${hue}, 100%, 60%)`;
-        u.trail.push({ x: u.x, y: u.y, color, time: performance.now() });
-        occupiedGrid[u.x][u.y] = u.id;
-        trailTimeGrid[u.x][u.y] = performance.now();
-
-        // Wide trail for burst or widener
-        if ((burstActive || trailWidenerActive) && u.isPlayer) {
-            const perp = { up: [{dx:-1,dy:0},{dx:1,dy:0}], down: [{dx:-1,dy:0},{dx:1,dy:0}],
-                           left: [{dx:0,dy:-1},{dx:0,dy:1}], right: [{dx:0,dy:-1},{dx:0,dy:1}] };
-            for (const off of perp[u.dir] || []) {
-                const wx = u.x + off.dx, wy = u.y + off.dy;
-                if (!isOutOfBounds(wx, wy) && occupiedGrid[wx][wy] === null) {
-                    const wcolor = `hsl(${(u.hueStart + u.trail.length * 8 + 30) % 360}, 100%, 65%)`;
-                    u.trail.push({ x: wx, y: wy, color: wcolor, time: performance.now() });
-                    occupiedGrid[wx][wy] = u.id;
-                    trailTimeGrid[wx][wy] = performance.now();
-                }
-            }
-        }
-
-        u.x = m.newX;
-        u.y = m.newY;
     }
+    for (const m of moves) {
+        const u = m.unicorn;
+        if (!u.alive) continue;
+        if (m.blocked) { recoverDirection(u); continue; }
+        if (isOutOfBounds(m.newX, m.newY)) {
+            killUnicorn(u, 'The arena wall', m.newX, m.newY);
+            if (u.alive) recoverDirection(u);
+            continue;
+        }
+        if (!canCrossTrail(u, m.newX, m.newY)) {
+            killUnicorn(u, occupiedGrid[m.newX][m.newY] === u.id ? 'Your hardened trail' : 'A rival’s hardened trail', m.newX, m.newY);
+            if (!u.alive) continue;
+            if (!u.isPlayer) { recoverDirection(u); continue; }
+        }
+        if (u.isPlayer && u.dir !== u.nextDir) { lastDirChangeTime = performance.now(); if (practiceActive) practiceProgress.turns++; }
+        u.dir = u.nextDir;
+        u.previousX = u.x; u.previousY = u.y;
+        u.lastMoveTime = gameTime; u.moveDuration = movementInterval(u);
+        addTrailCell(u, u.x, u.y);
+        if ((burstActive || trailWidenerActive) && u.isPlayer) {
+            const horizontal = u.dir === 'left' || u.dir === 'right';
+            for (const side of [-1, 1]) addTrailCell(u, u.x + (horizontal ? 0 : side), u.y + (horizontal ? side : 0));
+        }
+        u.x = m.newX; u.y = m.newY;
+        if (u.isPlayer) {
+            playerPosHistory.push({ px: u.x * GRID_SIZE + GRID_SIZE / 2, py: u.y * GRID_SIZE + GRID_SIZE / 2, dir: u.dir });
+            if (playerPosHistory.length > 120) playerPosHistory.shift();
+        }
+    }
+    checkCollectiblePickup(); checkPowerupPickup();
+    if (player && !player.alive) { finishRound(false); return; }
+    if (!practiceActive && selectedGameMode !== 'scoreattack' && !unicorns.some(u => !u.isPlayer && u.alive)) finishRound(true);
+}
 
-    // Check collectible/powerup pickups after movement
-    checkCollectiblePickup();
-    checkPowerupPickup();
+function finishRound(won) {
+    if (roundRecorded || practiceActive) return;
+    gameState = won ? WIN : GAME_OVER;
+    recordRound(won);
+    if (won) { playSound('win'); spawnWinParticles(); }
+}
 
-    if (player && !player.alive) { gameState = GAME_OVER; recordRound(false); return; }
-    const aliveNPCs = unicorns.filter(u => !u.isPlayer && u.alive);
-    if (aliveNPCs.length === 0) { gameState = WIN; recordRound(true); playSound('win'); spawnWinParticles(); }
+function respawnScoreAttackRivals() {
+    for (const u of unicorns) {
+        if (u.isPlayer || u.alive || !u.trailCleared) continue;
+        for (let attempt = 0; attempt < 50; attempt++) {
+            const x = randomInt(3, COLS - 4), y = randomInt(3, ROWS - 4);
+            if (occupiedGrid[x][y] === null && Math.abs(x - player.x) + Math.abs(y - player.y) > 12 && !unicorns.some(other => other.alive && other.x === x && other.y === y)) {
+                Object.assign(u, { x, y, previousX: x, previousY: y, alive: true, deathTime: null, trailCleared: false, moveElapsed: 0, lastMoveTime: gameTime });
+                break;
+            }
+        }
+    }
 }
 
 // ---- ROUND TRACKING ----
+
 function recordRound(won) {
+    if (roundRecorded || practiceActive) return;
+    roundRecorded = true;
+    score = Math.round(score);
+    const previousBest = bestScores[selectedGameMode] || 0;
+    bestScores[selectedGameMode] = Math.max(previousBest, score);
     roundsPlayed++;
 
     // Calculate XP earned
@@ -1931,8 +2021,8 @@ function recordRound(won) {
 
     // Award Rainbow Points
     let rpEarned = RP_PER_MATCH;
-    rpEarned += runCollectibles * RP_PER_FOOD;
-    rpEarned += (currentWave + 1) * RP_PER_WAVE;
+    rpEarned += Math.floor(runCollectibles / 3);
+    if (won) rpEarned += Math.min(currentWave + 1, 8) * RP_PER_WAVE;
     if (isBossWave && won) rpEarned += RP_BOSS_BONUS;
     rainbowPoints += rpEarned;
 
@@ -1949,10 +2039,11 @@ function recordRound(won) {
     lastRunStats = {
         score, time: survivalTimer, kills: runKills, wave: currentWave + 1,
         collectibles: runCollectibles, xpEarned, rpEarned, won, mode: selectedGameMode,
+        newBest: score > previousBest, reason: lastCrash ? lastCrash.reason : null,
     };
 
     if (won) {
-        currentWave++;
+        if (selectedGameMode !== 'scoreattack') currentWave++;
         if (currentWave > highestWave) highestWave = currentWave;
         checkAchievement('first_win');
         if (!modesWon.includes(selectedGameMode)) {
@@ -2012,7 +2103,7 @@ function drawParticles(particles) {
 
 // ---- TRAIL FADE MANAGEMENT ----
 function updateTrailFades() {
-    const now = performance.now();
+    const now = gameTime;
     for (const u of unicorns) {
         if (!u.alive && u.deathTime && !u.trailCleared) {
             if (now - u.deathTime >= TRAIL_FADE_DURATION) {
@@ -2026,91 +2117,46 @@ function updateTrailFades() {
 
 // ---- DRAWING ----
 function drawBackground() {
-    ctx.fillStyle = BG_COLOR;
+    const gradient = ctx.createLinearGradient(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    gradient.addColorStop(0, '#291b3c'); gradient.addColorStop(1, '#181322');
+    ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    ctx.strokeStyle = GRID_LINE_COLOR;
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= CANVAS_WIDTH; x += GRID_SIZE) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_HEIGHT); ctx.stroke();
-    }
-    for (let y = 0; y <= CANVAS_HEIGHT; y += GRID_SIZE) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke();
-    }
+    ctx.strokeStyle = 'rgba(221, 202, 255, 0.045)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x <= CANVAS_WIDTH; x += GRID_SIZE) { ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_HEIGHT); }
+    for (let y = 0; y <= CANVAS_HEIGHT; y += GRID_SIZE) { ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(229, 200, 255, 0.24)'; ctx.lineWidth = 3;
+    roundRect(ctx, 2, 2, COLS * GRID_SIZE - 4, ROWS * GRID_SIZE - 4, 10); ctx.stroke();
 }
 
 function drawTrails() {
-    const now = performance.now();
-    for (const unicorn of unicorns) {
-        if (unicorn.trail.length === 0) continue;
-        let alpha = 1;
-        if (!unicorn.alive && unicorn.deathTime) {
-            alpha = Math.max(0, 1 - (now - unicorn.deathTime) / TRAIL_FADE_DURATION);
-            if (alpha <= 0) continue;
-        }
-        const trailLen = unicorn.trail.length;
-        for (let si = 0; si < trailLen; si++) {
-            const seg = unicorn.trail[si];
-            const isFresh = seg.time && (now - seg.time) < FRESH_POOP_DURATION;
-            // Newer trail segments pulse subtly
-            const age = trailLen - si;
-            const pulse = age < 5 ? (0.85 + 0.15 * Math.sin(now * 0.008 + si)) : 1;
-            const freshAlpha = isFresh ? 0.45 : 1;
-            ctx.globalAlpha = alpha * pulse * freshAlpha;
-            if (isFresh) {
-                // Lighter, sparkly fresh poop
-                const freshPct = (now - seg.time) / FRESH_POOP_DURATION;
-                const wobble = Math.sin(now * 0.01 + si * 0.5) * 1;
-                const hslMatch = seg.color.match(/hsl\((\d+)/);
-                const segHue = hslMatch ? parseInt(hslMatch[1]) : 0;
-                ctx.fillStyle = `hsl(${segHue}, 100%, 78%)`;
-                const x = seg.x * GRID_SIZE + 1 + wobble, y = seg.y * GRID_SIZE + 1;
-                const w = GRID_SIZE - 2, h = GRID_SIZE - 2, r = 3;
-                ctx.beginPath();
-                ctx.moveTo(x + r, y);
-                ctx.lineTo(x + w - r, y);
-                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-                ctx.lineTo(x + w, y + h - r);
-                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-                ctx.lineTo(x + r, y + h);
-                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-                ctx.lineTo(x, y + r);
-                ctx.quadraticCurveTo(x, y, x + r, y);
-                ctx.closePath();
-                ctx.fill();
-                // Sparkle
-                ctx.fillStyle = `rgba(255, 255, 255, ${0.5 * alpha * (1 - freshPct)})`;
-                ctx.beginPath();
-                ctx.arc(x + w * 0.5 + Math.sin(now * 0.015 + si) * 2, y + h * 0.3, 1.5, 0, Math.PI * 2);
-                ctx.fill();
+    for (const u of unicorns) {
+        const fade = u.alive ? 1 : Math.max(0, 1 - (gameTime - u.deathTime) / TRAIL_FADE_DURATION);
+        if (fade <= 0) continue;
+        for (const seg of u.trail) {
+            const fresh = gameTime - seg.time < FRESH_POOP_DURATION;
+            const x = seg.x * GRID_SIZE + 2, y = seg.y * GRID_SIZE + 2, size = GRID_SIZE - 4;
+            ctx.fillStyle = seg.color; ctx.globalAlpha = fade * (fresh ? 0.25 : 0.9);
+            roundRect(ctx, x, y, size, size, fresh ? size / 2 : 3); ctx.fill();
+            ctx.globalAlpha = fade * (fresh ? 0.8 : 0.25);
+            ctx.strokeStyle = fresh ? '#fff2ff' : '#1f1431'; ctx.lineWidth = fresh ? 1.2 : 1;
+            if (fresh) {
+                ctx.beginPath(); ctx.arc(x + size / 2, y + size / 2, 2, 0, Math.PI * 2); ctx.stroke();
             } else {
-                ctx.fillStyle = seg.color;
-                const x = seg.x * GRID_SIZE + 1, y = seg.y * GRID_SIZE + 1;
-                const w = GRID_SIZE - 2, h = GRID_SIZE - 2, r = 3;
-                ctx.beginPath();
-                ctx.moveTo(x + r, y);
-                ctx.lineTo(x + w - r, y);
-                ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-                ctx.lineTo(x + w, y + h - r);
-                ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-                ctx.lineTo(x + r, y + h);
-                ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-                ctx.lineTo(x, y + r);
-                ctx.quadraticCurveTo(x, y, x + r, y);
-                ctx.closePath();
-                ctx.fill();
-                ctx.fillStyle = `rgba(255, 255, 255, ${0.2 * alpha})`;
-                ctx.beginPath();
-                ctx.arc(x + w * 0.35, y + h * 0.35, 2, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.beginPath(); ctx.moveTo(x + 3, y + 3); ctx.lineTo(x + size - 3, y + size - 3); ctx.stroke();
             }
         }
     }
     ctx.globalAlpha = 1;
+    if (lastCrash) {
+        const x = Math.max(0, Math.min(COLS - 1, lastCrash.x)) * GRID_SIZE;
+        const y = Math.max(0, Math.min(ROWS - 1, lastCrash.y)) * GRID_SIZE;
+        ctx.fillStyle = 'rgba(255, 96, 140, 0.3)'; ctx.fillRect(x, y, GRID_SIZE, GRID_SIZE);
+        ctx.strokeStyle = '#ff9cbf'; ctx.lineWidth = 2; ctx.strokeRect(x - 3, y - 3, GRID_SIZE + 6, GRID_SIZE + 6);
+    }
 }
 
-// ---- HAT DRAWING ----
-// Draws a hat at the given position in local unicorn space (facing right).
-// headX, headY = center of head circle; hr = head radius; s = overall scale
 function drawHat(hatId, headX, headY, hr, s, trot) {
     if (!hatId || hatId === 'none') return;
 
@@ -2336,72 +2382,72 @@ function drawHat(hatId, headX, headY, hr, s, trot) {
 // Used for player in gameplay and in customize preview.
 // avatarId: string, accessoryId: string, cx/cy: center pixel pos,
 // dir: 'right'|'left'|'up'|'down', size: pixel size, trot: animation phase
-function drawSpriteUnicorn(avatarId, accessoryId, cx, cy, dir, size, trot) {
+function drawSpriteUnicorn(avatarId, accessoryId, cx, cy, dir, size, trot, drawingCtx = ctx) {
     const avatarImg = imgCache[avatarId];
-    if (!avatarImg || !avatarImg.complete) return;
+    if (!avatarImg || !avatarImg.complete || !avatarImg.naturalWidth) return;
 
     const now = performance.now();
 
     // ---- Animation calculations ----
     // Idle bob (1-2px)
-    const bob = Math.sin(now * 0.004) * 1.5;
+    const bob = reducedMotion ? 0 : Math.sin(now * 0.004) * 1.2;
     // Squash/stretch on direction change
     const dirAge = (now - lastDirChangeTime) / 1000;
-    const squash = dirAge < 0.15 ? 1 + 0.08 * Math.cos(dirAge / 0.15 * Math.PI) : 1;
-    const stretch = dirAge < 0.15 ? 1 - 0.06 * Math.cos(dirAge / 0.15 * Math.PI) : 1;
+    const squash = !reducedMotion && dirAge < 0.15 ? 1 + 0.08 * Math.cos(dirAge / 0.15 * Math.PI) : 1;
+    const stretch = !reducedMotion && dirAge < 0.15 ? 1 - 0.06 * Math.cos(dirAge / 0.15 * Math.PI) : 1;
     // Collect bounce
     const collectAge = (now - lastCollectTime) / 1000;
     const collectBounce = collectAge < 0.2 ? -3 * Math.sin(collectAge / 0.2 * Math.PI) : 0;
     const collectTilt = collectAge < 0.2 ? 0.05 * Math.sin(collectAge / 0.2 * Math.PI * 2) : 0;
 
-    ctx.save();
-    ctx.translate(cx, cy + bob + collectBounce);
+    drawingCtx.save();
+    drawingCtx.translate(cx, cy + bob + collectBounce);
 
     // Direction: the PNGs face right, so flip for left; rotate for up/down
     const DIR_ANGLES = { right: 0, down: Math.PI / 2, left: 0, up: -Math.PI / 2 };
     const angle = DIR_ANGLES[dir] || 0;
     const flipX = (dir === 'left') ? -1 : 1;
 
-    ctx.rotate(angle + collectTilt);
-    ctx.scale(flipX * squash, stretch);
+    drawingCtx.rotate(angle + collectTilt);
+    drawingCtx.scale(flipX * squash, stretch);
 
     // Keep pixel art crisp
-    ctx.imageSmoothingEnabled = false;
+    drawingCtx.imageSmoothingEnabled = false;
 
     // Subtle glow/shadow behind sprite
-    ctx.shadowColor = 'rgba(255, 200, 255, 0.35)';
-    ctx.shadowBlur = 8;
+    drawingCtx.shadowColor = 'rgba(255, 200, 255, 0.35)';
+    drawingCtx.shadowBlur = 8;
 
     // ---- Draw cape BEHIND unicorn if selected ----
     const accMeta = ACCESSORIES.find(a => a.id === accessoryId);
     if (accMeta && accMeta.anchor === 'back') {
         const accImg = imgCache['acc_' + accessoryId];
-        if (accImg && accImg.complete) {
+        if (accImg && accImg.complete && accImg.naturalWidth) {
             const accScale = size / SPRITE_GAME_SIZE * (size === SPRITE_GAME_SIZE ? ACCESSORY_SCALE_GAME : ACCESSORY_SCALE_PREVIEW);
             const accSize = Math.max(accImg.width, accImg.height) * accScale;
             // Cape lag: smooth toward opposite of movement
             const targetLag = (dir === 'left' || dir === 'up') ? 0.15 : -0.15;
             capeAngle += (targetLag - capeAngle) * 0.08;
-            ctx.save();
-            ctx.rotate(capeAngle);
+            drawingCtx.save();
+            drawingCtx.rotate(capeAngle);
             const cOx = (accMeta.ox || 0) * (size / SPRITE_GAME_SIZE);
             const cOy = (accMeta.oy || 0) * (size / SPRITE_GAME_SIZE);
-            ctx.drawImage(accImg, cOx - accSize / 2, cOy - accSize / 2, accSize, accSize);
-            ctx.restore();
+            drawingCtx.drawImage(accImg, cOx - accSize / 2, cOy - accSize / 2, accSize, accSize);
+            drawingCtx.restore();
         }
     }
 
     // ---- Draw unicorn body ----
-    ctx.shadowColor = 'rgba(0,0,0,0)';
-    ctx.shadowBlur = 0;
+    drawingCtx.shadowColor = 'rgba(0,0,0,0)';
+    drawingCtx.shadowBlur = 0;
     const halfW = size / 2;
     const halfH = size / 2 * (avatarImg.height / avatarImg.width);
-    ctx.drawImage(avatarImg, -halfW, -halfH, size, size * (avatarImg.height / avatarImg.width));
+    drawingCtx.drawImage(avatarImg, -halfW, -halfH, size, size * (avatarImg.height / avatarImg.width));
 
     // ---- Draw accessories ON TOP ----
     if (accMeta && accMeta.path && accMeta.anchor !== 'back' && accMeta.anchor !== 'none') {
         const accImg = imgCache['acc_' + accessoryId];
-        if (accImg && accImg.complete) {
+        if (accImg && accImg.complete && accImg.naturalWidth) {
             const scaleFactor = size / SPRITE_GAME_SIZE;
             const accScale = scaleFactor * (size === SPRITE_GAME_SIZE ? ACCESSORY_SCALE_GAME : ACCESSORY_SCALE_PREVIEW);
             const accW = accImg.width * accScale;
@@ -2428,48 +2474,41 @@ function drawSpriteUnicorn(avatarId, accessoryId, cx, cy, dir, size, trot) {
                 aox += -size * 0.15; aoy += headY;
             }
 
-            ctx.drawImage(accImg, aox - accW / 2, aoy - accH / 2, accW, accH);
+            drawingCtx.drawImage(accImg, aox - accW / 2, aoy - accH / 2, accW, accH);
         }
     }
 
-    ctx.imageSmoothingEnabled = true;
-    ctx.restore();
+    drawingCtx.imageSmoothingEnabled = true;
+    drawingCtx.restore();
 }
 
-function drawUnicorn(unicorn) {
-    if (!unicorn.alive) return;
+function visualPosition(u) {
+    // Render between the last two cells; collision checks always use the exact grid position.
+    const t = Math.min(1, Math.max(0, (gameTime + (gameState === PLAYING ? simulationAccumulator : 0) - u.lastMoveTime) / (u.moveDuration || 110)));
+    const x = reducedMotion ? u.x : u.previousX + (u.x - u.previousX) * t;
+    const y = reducedMotion ? u.y : u.previousY + (u.y - u.previousY) * t;
+    return { x: x * GRID_SIZE + GRID_SIZE / 2, y: y * GRID_SIZE + GRID_SIZE / 2 };
+}
 
-    // Player uses PNG sprite system
-    if (unicorn.isPlayer && imgCache[selectedAvatarId]) {
-        const cx = unicorn.x * GRID_SIZE + GRID_SIZE / 2;
-        const cy = unicorn.y * GRID_SIZE + GRID_SIZE / 2;
-        drawSpriteUnicorn(selectedAvatarId, selectedAccessoryId, cx, cy, unicorn.dir, SPRITE_GAME_SIZE, unicorn.trotPhase);
-        return;
-    }
-
-    // NPCs use the original vector drawing
-    const theme = unicorn.theme;
-    const scale = unicorn.isPlayer ? PLAYER_SCALE : NPC_SCALE;
-    const trot = unicorn.trotPhase || 0;
-    const hatId = null;
-
-    const cx = unicorn.x * GRID_SIZE + GRID_SIZE / 2;
-    const cy = unicorn.y * GRID_SIZE + GRID_SIZE / 2;
-
-    const DIR_ANGLES = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
-    const angle = DIR_ANGLES[unicorn.dir];
-
+function drawUnicorn(u) {
+    if (!u.alive) return;
+    const pos = visualPosition(u);
+    const avatar = u.isPlayer ? selectedAvatarId : u.avatarId || (u.isBoss ? (u.bossType.id === 'phantom' ? 'shadow' : 'royal') : 'candy');
+    const size = u.isBoss ? 54 : u.isPlayer ? 42 : 36;
     ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(angle);
-
-    drawUnicornBody(theme, scale, trot, hatId);
-
+    if (u.isPlayer) {
+        ctx.strokeStyle = gameTime < u.invulnerableUntil ? '#98edda' : '#ffe0a1';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(pos.x, pos.y + 10, 18, 7, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    drawSpriteUnicorn(avatar, u.isPlayer ? selectedAccessoryId : 'none', pos.x, pos.y, u.dir, size, u.trotPhase);
+    if (u.isPlayer && survivalTimer < 5000) {
+        ctx.textAlign = 'center'; ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = '#ffe0a1';
+        ctx.fillText('YOU', pos.x, pos.y - 27);
+    }
     ctx.restore();
 }
 
-// Draws unicorn body in local space (facing right, centered at origin).
-// Realistic horse anatomy: curved body, jointed legs, long snout, flowing mane/tail.
 function drawUnicornBody(theme, scale, trot, hatId) {
     const s = scale;
     const bl = BODY_LENGTH * s;
@@ -2904,8 +2943,8 @@ function drawUnicornBody(theme, scale, trot, hatId) {
 // ---- COMPANION DRAWING ----
 // Draws a companion at a position in canvas space, facing a direction.
 // companionScale controls height (should be roughly leg-height of the unicorn).
-function drawCompanion(companionId, cx, cy, dir, trot, companionScale) {
-    const comp = COMPANIONS.find(c => c.id === companionId);
+function drawCompanion(companionId, cx, cy, dir, trot, companionScale, drawingCtx = ctx) {
+    const comp = companionId === 'dog_brown' ? { type: 'dog', ...getEquippedDog() } : COMPANIONS.find(c => c.id === companionId);
     if (!comp || comp.type === 'none') return;
 
     const DIR_ANGLES = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
@@ -2913,9 +2952,9 @@ function drawCompanion(companionId, cx, cy, dir, trot, companionScale) {
     const cs = companionScale || 0.6;
     const bounce = Math.sin(trot * 2.5) * 0.8 * cs;
 
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(angle);
+    drawingCtx.save();
+    drawingCtx.translate(cx, cy);
+    drawingCtx.rotate(angle);
 
     if (comp.type === 'pony') {
         // Mini pony: small oval body, head, tiny legs, mane, tail
@@ -2926,39 +2965,39 @@ function drawCompanion(companionId, cx, cy, dir, trot, companionScale) {
         for (let i = 0; i < 4; i++) {
             const lx = -bl * 0.35 + i * bl * 0.25;
             const swing = Math.sin(trot + i * Math.PI / 2) * ll * 0.2;
-            ctx.beginPath();
-            ctx.moveTo(lx, legY); ctx.lineTo(lx + swing, legY + ll);
-            ctx.strokeStyle = comp.bodyColor; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(lx, legY); drawingCtx.lineTo(lx + swing, legY + ll);
+            drawingCtx.strokeStyle = comp.bodyColor; drawingCtx.lineWidth = lw; drawingCtx.lineCap = 'round'; drawingCtx.stroke();
         }
         // Body
-        ctx.beginPath(); ctx.ellipse(0, bounce, bl, bh, 0, 0, Math.PI * 2);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.ellipse(0, bounce, bl, bh, 0, 0, Math.PI * 2);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Head
-        ctx.beginPath(); ctx.arc(bl * 0.7, -bh * 0.4 + bounce, hr, 0, Math.PI * 2);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.arc(bl * 0.7, -bh * 0.4 + bounce, hr, 0, Math.PI * 2);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Eye
-        ctx.beginPath(); ctx.arc(bl * 0.85, -bh * 0.5 + bounce, hr * 0.25, 0, Math.PI * 2);
-        ctx.fillStyle = '#111'; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.arc(bl * 0.85, -bh * 0.5 + bounce, hr * 0.25, 0, Math.PI * 2);
+        drawingCtx.fillStyle = '#111'; drawingCtx.fill();
         // Ear
-        ctx.beginPath();
-        ctx.moveTo(bl * 0.65, -bh * 0.4 - hr * 0.7 + bounce);
-        ctx.lineTo(bl * 0.7, -bh * 0.4 - hr * 1.2 + bounce);
-        ctx.lineTo(bl * 0.8, -bh * 0.4 - hr * 0.6 + bounce);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath();
+        drawingCtx.moveTo(bl * 0.65, -bh * 0.4 - hr * 0.7 + bounce);
+        drawingCtx.lineTo(bl * 0.7, -bh * 0.4 - hr * 1.2 + bounce);
+        drawingCtx.lineTo(bl * 0.8, -bh * 0.4 - hr * 0.6 + bounce);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Mane
         for (let i = 0; i < 3; i++) {
             const mx = bl * 0.4 - i * bl * 0.2;
             const my = -bh * 0.7 + bounce;
             const mw = Math.sin(trot * 1.5 + i) * hr * 0.15;
-            ctx.beginPath(); ctx.moveTo(mx, my);
-            ctx.quadraticCurveTo(mx - hr * 0.3 + mw, my + hr * 0.5, mx - hr * 0.2 + mw, my + hr * 0.9);
-            ctx.strokeStyle = comp.maneColor; ctx.lineWidth = Math.max(0.8, cs * 1.0); ctx.lineCap = 'round'; ctx.stroke();
+            drawingCtx.beginPath(); drawingCtx.moveTo(mx, my);
+            drawingCtx.quadraticCurveTo(mx - hr * 0.3 + mw, my + hr * 0.5, mx - hr * 0.2 + mw, my + hr * 0.9);
+            drawingCtx.strokeStyle = comp.maneColor; drawingCtx.lineWidth = Math.max(0.8, cs * 1.0); drawingCtx.lineCap = 'round'; drawingCtx.stroke();
         }
         // Tail
         const tw = Math.sin(trot * 1.3) * hr * 0.2;
-        ctx.beginPath(); ctx.moveTo(-bl * 0.8, -bh * 0.1 + bounce);
-        ctx.bezierCurveTo(-bl - hr * 0.3, -bh * 0.3 + bounce + tw, -bl - hr * 0.5 + tw, bh * 0.1 + bounce, -bl - hr * 0.3, bh * 0.3 + bounce + tw);
-        ctx.strokeStyle = comp.maneColor; ctx.lineWidth = Math.max(1, cs * 1.2); ctx.lineCap = 'round'; ctx.stroke();
+        drawingCtx.beginPath(); drawingCtx.moveTo(-bl * 0.8, -bh * 0.1 + bounce);
+        drawingCtx.bezierCurveTo(-bl - hr * 0.3, -bh * 0.3 + bounce + tw, -bl - hr * 0.5 + tw, bh * 0.1 + bounce, -bl - hr * 0.3, bh * 0.3 + bounce + tw);
+        drawingCtx.strokeStyle = comp.maneColor; drawingCtx.lineWidth = Math.max(1, cs * 1.2); drawingCtx.lineCap = 'round'; drawingCtx.stroke();
     }
 
     if (comp.type === 'cat') {
@@ -2969,59 +3008,59 @@ function drawCompanion(companionId, cx, cy, dir, trot, companionScale) {
         for (let i = 0; i < 4; i++) {
             const lx = -bl * 0.35 + i * bl * 0.25;
             const swing = Math.sin(trot * 1.3 + i * Math.PI / 2) * ll * 0.15;
-            ctx.beginPath(); ctx.moveTo(lx, legY); ctx.lineTo(lx + swing, legY + ll);
-            ctx.strokeStyle = comp.bodyColor; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
+            drawingCtx.beginPath(); drawingCtx.moveTo(lx, legY); drawingCtx.lineTo(lx + swing, legY + ll);
+            drawingCtx.strokeStyle = comp.bodyColor; drawingCtx.lineWidth = lw; drawingCtx.lineCap = 'round'; drawingCtx.stroke();
             // Paw
-            ctx.beginPath(); ctx.arc(lx + swing, legY + ll, lw * 0.5, 0, Math.PI * 2);
-            ctx.fillStyle = comp.bodyColor; ctx.fill();
+            drawingCtx.beginPath(); drawingCtx.arc(lx + swing, legY + ll, lw * 0.5, 0, Math.PI * 2);
+            drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         }
         // Body
-        ctx.beginPath(); ctx.ellipse(0, bounce, bl, bh, 0, 0, Math.PI * 2);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.ellipse(0, bounce, bl, bh, 0, 0, Math.PI * 2);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Stripes
-        ctx.strokeStyle = comp.stripeColor; ctx.lineWidth = Math.max(0.5, cs * 0.6);
+        drawingCtx.strokeStyle = comp.stripeColor; drawingCtx.lineWidth = Math.max(0.5, cs * 0.6);
         for (let i = 0; i < 3; i++) {
             const sx = -bl * 0.2 + i * bl * 0.25;
-            ctx.beginPath(); ctx.moveTo(sx, -bh * 0.6 + bounce); ctx.lineTo(sx, bh * 0.3 + bounce); ctx.stroke();
+            drawingCtx.beginPath(); drawingCtx.moveTo(sx, -bh * 0.6 + bounce); drawingCtx.lineTo(sx, bh * 0.3 + bounce); drawingCtx.stroke();
         }
         // Head (round)
-        ctx.beginPath(); ctx.arc(bl * 0.65, -bh * 0.3 + bounce, hr, 0, Math.PI * 2);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.arc(bl * 0.65, -bh * 0.3 + bounce, hr, 0, Math.PI * 2);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Ears (triangles)
         for (let ei = -1; ei <= 1; ei += 2) {
-            ctx.beginPath();
-            ctx.moveTo(bl * 0.55 + ei * hr * 0.4, -bh * 0.3 - hr * 0.7 + bounce);
-            ctx.lineTo(bl * 0.55 + ei * hr * 0.1, -bh * 0.3 - hr * 1.3 + bounce);
-            ctx.lineTo(bl * 0.75 + ei * hr * 0.1, -bh * 0.3 - hr * 0.7 + bounce);
-            ctx.fillStyle = comp.bodyColor; ctx.fill();
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(bl * 0.55 + ei * hr * 0.4, -bh * 0.3 - hr * 0.7 + bounce);
+            drawingCtx.lineTo(bl * 0.55 + ei * hr * 0.1, -bh * 0.3 - hr * 1.3 + bounce);
+            drawingCtx.lineTo(bl * 0.75 + ei * hr * 0.1, -bh * 0.3 - hr * 0.7 + bounce);
+            drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
             // Inner ear
-            ctx.beginPath();
-            ctx.moveTo(bl * 0.57 + ei * hr * 0.3, -bh * 0.3 - hr * 0.75 + bounce);
-            ctx.lineTo(bl * 0.57 + ei * hr * 0.15, -bh * 0.3 - hr * 1.1 + bounce);
-            ctx.lineTo(bl * 0.7 + ei * hr * 0.1, -bh * 0.3 - hr * 0.75 + bounce);
-            ctx.fillStyle = '#FFB6C1'; ctx.fill();
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(bl * 0.57 + ei * hr * 0.3, -bh * 0.3 - hr * 0.75 + bounce);
+            drawingCtx.lineTo(bl * 0.57 + ei * hr * 0.15, -bh * 0.3 - hr * 1.1 + bounce);
+            drawingCtx.lineTo(bl * 0.7 + ei * hr * 0.1, -bh * 0.3 - hr * 0.75 + bounce);
+            drawingCtx.fillStyle = '#FFB6C1'; drawingCtx.fill();
         }
         // Eyes
-        ctx.beginPath(); ctx.ellipse(bl * 0.75, -bh * 0.35 + bounce, hr * 0.22, hr * 0.3, 0, 0, Math.PI * 2);
-        ctx.fillStyle = '#4CAF50'; ctx.fill();
-        ctx.beginPath(); ctx.ellipse(bl * 0.75, -bh * 0.35 + bounce, hr * 0.1, hr * 0.25, 0, 0, Math.PI * 2);
-        ctx.fillStyle = '#111'; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.ellipse(bl * 0.75, -bh * 0.35 + bounce, hr * 0.22, hr * 0.3, 0, 0, Math.PI * 2);
+        drawingCtx.fillStyle = '#4CAF50'; drawingCtx.fill();
+        drawingCtx.beginPath(); drawingCtx.ellipse(bl * 0.75, -bh * 0.35 + bounce, hr * 0.1, hr * 0.25, 0, 0, Math.PI * 2);
+        drawingCtx.fillStyle = '#111'; drawingCtx.fill();
         // Nose
-        ctx.beginPath();
-        ctx.moveTo(bl * 0.85, -bh * 0.2 + bounce);
-        ctx.lineTo(bl * 0.82, -bh * 0.15 + bounce);
-        ctx.lineTo(bl * 0.88, -bh * 0.15 + bounce);
-        ctx.fillStyle = '#FF69B4'; ctx.fill();
+        drawingCtx.beginPath();
+        drawingCtx.moveTo(bl * 0.85, -bh * 0.2 + bounce);
+        drawingCtx.lineTo(bl * 0.82, -bh * 0.15 + bounce);
+        drawingCtx.lineTo(bl * 0.88, -bh * 0.15 + bounce);
+        drawingCtx.fillStyle = '#FF69B4'; drawingCtx.fill();
         // Whiskers
-        ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = Math.max(0.3, cs * 0.3);
+        drawingCtx.strokeStyle = 'rgba(0,0,0,0.2)'; drawingCtx.lineWidth = Math.max(0.3, cs * 0.3);
         for (let wi = -1; wi <= 1; wi += 2) {
-            ctx.beginPath(); ctx.moveTo(bl * 0.85, -bh * 0.18 + bounce); ctx.lineTo(bl + hr * 0.5, -bh * 0.2 + wi * hr * 0.2 + bounce); ctx.stroke();
+            drawingCtx.beginPath(); drawingCtx.moveTo(bl * 0.85, -bh * 0.18 + bounce); drawingCtx.lineTo(bl + hr * 0.5, -bh * 0.2 + wi * hr * 0.2 + bounce); drawingCtx.stroke();
         }
         // Tail (curled up)
         const tw = Math.sin(trot * 1.1) * bl * 0.1;
-        ctx.beginPath(); ctx.moveTo(-bl * 0.7, -bh * 0.05 + bounce);
-        ctx.bezierCurveTo(-bl - hr * 0.4, -bh * 0.4 + bounce, -bl - hr * 0.2 + tw, -bh - hr * 0.3 + bounce, -bl + hr * 0.1, -bh - hr * 0.1 + bounce);
-        ctx.strokeStyle = comp.bodyColor; ctx.lineWidth = Math.max(1, cs * 1.3); ctx.lineCap = 'round'; ctx.stroke();
+        drawingCtx.beginPath(); drawingCtx.moveTo(-bl * 0.7, -bh * 0.05 + bounce);
+        drawingCtx.bezierCurveTo(-bl - hr * 0.4, -bh * 0.4 + bounce, -bl - hr * 0.2 + tw, -bh - hr * 0.3 + bounce, -bl + hr * 0.1, -bh - hr * 0.1 + bounce);
+        drawingCtx.strokeStyle = comp.bodyColor; drawingCtx.lineWidth = Math.max(1, cs * 1.3); drawingCtx.lineCap = 'round'; drawingCtx.stroke();
     }
 
     if (comp.type === 'dog') {
@@ -3032,57 +3071,56 @@ function drawCompanion(companionId, cx, cy, dir, trot, companionScale) {
         for (let i = 0; i < 4; i++) {
             const lx = -bl * 0.35 + i * bl * 0.25;
             const swing = Math.sin(trot * 1.2 + i * Math.PI / 2) * ll * 0.2;
-            ctx.beginPath(); ctx.moveTo(lx, legY); ctx.lineTo(lx + swing, legY + ll);
-            ctx.strokeStyle = comp.bodyColor; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
-            ctx.beginPath(); ctx.arc(lx + swing, legY + ll, lw * 0.5, 0, Math.PI * 2);
-            ctx.fillStyle = comp.bodyColor; ctx.fill();
+            drawingCtx.beginPath(); drawingCtx.moveTo(lx, legY); drawingCtx.lineTo(lx + swing, legY + ll);
+            drawingCtx.strokeStyle = comp.bodyColor; drawingCtx.lineWidth = lw; drawingCtx.lineCap = 'round'; drawingCtx.stroke();
+            drawingCtx.beginPath(); drawingCtx.arc(lx + swing, legY + ll, lw * 0.5, 0, Math.PI * 2);
+            drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         }
         // Body
-        ctx.beginPath(); ctx.ellipse(0, bounce, bl, bh, 0, 0, Math.PI * 2);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.ellipse(0, bounce, bl, bh, 0, 0, Math.PI * 2);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Head (slight oval)
-        ctx.beginPath(); ctx.ellipse(bl * 0.65, -bh * 0.3 + bounce, hr * 1.1, hr, 0, 0, Math.PI * 2);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.ellipse(bl * 0.65, -bh * 0.3 + bounce, hr * 1.1, hr, 0, 0, Math.PI * 2);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Snout
-        ctx.beginPath(); ctx.ellipse(bl * 0.9, -bh * 0.15 + bounce, hr * 0.5, hr * 0.35, 0, 0, Math.PI * 2);
-        ctx.fillStyle = comp.bodyColor; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.ellipse(bl * 0.9, -bh * 0.15 + bounce, hr * 0.5, hr * 0.35, 0, 0, Math.PI * 2);
+        drawingCtx.fillStyle = comp.bodyColor; drawingCtx.fill();
         // Nose
-        ctx.beginPath(); ctx.arc(bl * 1.05, -bh * 0.2 + bounce, hr * 0.18, 0, Math.PI * 2);
-        ctx.fillStyle = '#333'; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.arc(bl * 1.05, -bh * 0.2 + bounce, hr * 0.18, 0, Math.PI * 2);
+        drawingCtx.fillStyle = '#333'; drawingCtx.fill();
         // Eyes
-        ctx.beginPath(); ctx.arc(bl * 0.7, -bh * 0.45 + bounce, hr * 0.2, 0, Math.PI * 2);
-        ctx.fillStyle = '#5D4037'; ctx.fill();
-        ctx.beginPath(); ctx.arc(bl * 0.72, -bh * 0.47 + bounce, hr * 0.08, 0, Math.PI * 2);
-        ctx.fillStyle = '#FFF'; ctx.fill();
+        drawingCtx.beginPath(); drawingCtx.arc(bl * 0.7, -bh * 0.45 + bounce, hr * 0.2, 0, Math.PI * 2);
+        drawingCtx.fillStyle = '#5D4037'; drawingCtx.fill();
+        drawingCtx.beginPath(); drawingCtx.arc(bl * 0.72, -bh * 0.47 + bounce, hr * 0.08, 0, Math.PI * 2);
+        drawingCtx.fillStyle = '#FFF'; drawingCtx.fill();
         // Floppy ears
         for (let ei = -1; ei <= 1; ei += 2) {
             const earWag = Math.sin(trot * 1.5 + ei) * hr * 0.1;
-            ctx.beginPath();
-            ctx.ellipse(bl * 0.45 + ei * hr * 0.15, -bh * 0.1 + bounce + earWag, hr * 0.35, hr * 0.7, ei * 0.3, 0, Math.PI * 2);
-            ctx.fillStyle = comp.earColor; ctx.fill();
+            drawingCtx.beginPath();
+            drawingCtx.ellipse(bl * 0.45 + ei * hr * 0.15, -bh * 0.1 + bounce + earWag, hr * 0.35, hr * 0.7, ei * 0.3, 0, Math.PI * 2);
+            drawingCtx.fillStyle = comp.earColor; drawingCtx.fill();
         }
         // Tail (wagging)
         const tw = Math.sin(trot * 3) * bl * 0.15;
-        ctx.beginPath(); ctx.moveTo(-bl * 0.8, -bh * 0.2 + bounce);
-        ctx.bezierCurveTo(-bl - hr * 0.2, -bh * 0.6 + bounce + tw, -bl - hr * 0.3, -bh - hr * 0.2 + bounce + tw, -bl - hr * 0.1, -bh - hr * 0.4 + bounce + tw);
-        ctx.strokeStyle = comp.bodyColor; ctx.lineWidth = Math.max(1.2, cs * 1.5); ctx.lineCap = 'round'; ctx.stroke();
+        drawingCtx.beginPath(); drawingCtx.moveTo(-bl * 0.8, -bh * 0.2 + bounce);
+        drawingCtx.bezierCurveTo(-bl - hr * 0.2, -bh * 0.6 + bounce + tw, -bl - hr * 0.3, -bh - hr * 0.2 + bounce + tw, -bl - hr * 0.1, -bh - hr * 0.4 + bounce + tw);
+        drawingCtx.strokeStyle = comp.bodyColor; drawingCtx.lineWidth = Math.max(1.2, cs * 1.5); drawingCtx.lineCap = 'round'; drawingCtx.stroke();
         // Tongue (hanging out when moving)
-        ctx.beginPath();
-        ctx.moveTo(bl * 0.95, -bh * 0.05 + bounce);
-        ctx.quadraticCurveTo(bl * 1.05, bh * 0.1 + bounce, bl * 0.95, bh * 0.15 + bounce);
-        ctx.strokeStyle = '#FF69B4'; ctx.lineWidth = Math.max(0.8, cs * 0.8); ctx.lineCap = 'round'; ctx.stroke();
+        drawingCtx.beginPath();
+        drawingCtx.moveTo(bl * 0.95, -bh * 0.05 + bounce);
+        drawingCtx.quadraticCurveTo(bl * 1.05, bh * 0.1 + bounce, bl * 0.95, bh * 0.15 + bounce);
+        drawingCtx.strokeStyle = '#FF69B4'; drawingCtx.lineWidth = Math.max(0.8, cs * 0.8); drawingCtx.lineCap = 'round'; drawingCtx.stroke();
     }
 
-    ctx.restore();
+    drawingCtx.restore();
 }
 
-function updateCompanionPositions() {
+function updateCompanionPositions(delta = SIMULATION_STEP) {
     if (!player || !player.alive) return;
 
     const px = player.x * GRID_SIZE + GRID_SIZE / 2;
     const py = player.y * GRID_SIZE + GRID_SIZE / 2;
-    playerPosHistory.push({ px, py, dir: player.dir });
-    if (playerPosHistory.length > 200) playerPosHistory.shift();
+
 
     // Always have 1 visual slot for the dog
     if (companionVisuals.length < 1) {
@@ -3099,8 +3137,9 @@ function updateCompanionPositions() {
     const offY = target.py + (dx) * COMPANION_OFFSET_PX;
 
     const cv = companionVisuals[0];
-    cv.x += (offX - cv.x) * COMPANION_LERP_SPEED;
-    cv.y += (offY - cv.y) * COMPANION_LERP_SPEED;
+    const smoothing = 1 - Math.pow(1 - COMPANION_LERP_SPEED, delta / 16);
+    cv.x += (offX - cv.x) * smoothing;
+    cv.y += (offY - cv.y) * smoothing;
     cv.dir = target.dir;
 }
 
@@ -3145,6 +3184,7 @@ function drawAllUnicorns() {
 }
 
 function drawHUD() {
+    if (typeof syncGameUI === 'function') { if (isMobile && showDpad && gameState === PLAYING) drawTouchControls(); return; }
     ctx.save();
 
     ctx.font = 'bold 20px monospace';
@@ -3163,7 +3203,7 @@ function drawHUD() {
     ctx.fillStyle = '#FFD700';
     ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`Score: ${score}`, 16, 36);
+    ctx.fillText(`Score: ${Math.floor(score)}`, 16, 36);
     if (scoreMultiplier > 1) {
         ctx.fillStyle = '#6BCB77';
         ctx.fillText(`x${scoreMultiplier.toFixed(1)}`, 130, 36);
@@ -3258,6 +3298,7 @@ function drawTouchControls() {
         }
     }
 
+    if (typeof syncGameUI === 'function') return;
     // Pause button
     touchPauseBtn.x = CANVAS_WIDTH - 50;
     touchPauseBtn.y = 60;
@@ -3717,6 +3758,8 @@ function drawCountdownScreen() {
     ctx.fillText(text, CANVAS_WIDTH / 2 + 3, CANVAS_HEIGHT / 2 + 3);
     ctx.fillStyle = color;
     ctx.fillText(text, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2);
+    ctx.font = '20px sans-serif'; ctx.fillStyle = '#eddcf9';
+    ctx.fillText(practiceActive ? 'Practice arena · crashes are safe here' : 'Cross the soft dots. Avoid the solid tiles.', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 65);
 
     // Boss announcement
     if (isBossWave) {
@@ -3776,7 +3819,7 @@ function drawGameOverScreen() {
 
     ctx.font = '18px sans-serif';
     ctx.fillStyle = '#FF6B6B';
-    ctx.fillText('Difficulty resets to Wave 1', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 78);
+    ctx.fillText('Retry this wave — your progress is safe', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 78);
 
     ctx.font = 'bold 24px sans-serif';
     blinkTimer = (blinkTimer + 0.03) % (Math.PI * 2);
@@ -3875,19 +3918,19 @@ function drawInstructionsScreen() {
 
     section('\u2B50  Objective', '#FFD700');
     line('You are a magical unicorn leaving rainbow poop trails!');
-    line('Avoid all poop trails (yours and others) or you lose.');
+    line('Cross fresh, glowing trails briefly. Hardened trails are deadly.');
     line('Outlast the NPC unicorns to win each wave.');
     y += 8;
 
     section('\uD83D\uDC36  Dogs & Companions', '#4FC3F7');
-    line('Unlock dogs by playing more rounds (3, 6, 10 rounds).');
-    line('Dogs follow you and give +5% score per dog.');
-    line('Ponies and cats also give a score bonus!');
+    line('Unlock dogs at 5, 10, 20, 35 and 50 matches.');
+    line('Equip one dog for its unique speed, magnet or safety perk.');
+    line('Buy accessories using Rainbow Points earned each match.');
     y += 8;
 
     section('\uD83C\uDFA9  Hats', '#C77DFF');
     line('Each hat gives a unique gameplay buff.');
-    line('Crown: +10% score  |  Cowboy: 1 free collision');
+    line('Crown: +5% score  |  Helmet: 1 crash save');
     line('Wizard: slower speed scaling  |  And more!');
     y += 8;
 
@@ -3896,7 +3939,7 @@ function drawInstructionsScreen() {
     y += 8;
 
     section('\uD83D\uDE80  Progression', '#FF69B4');
-    line('Win waves to face harder opponents. Lose = restart at Wave 1.');
+    line('Win to advance. After a loss, retry the same wave.');
     line('Collect stars & gems for score. Grab power-ups for abilities!');
 
     // Back button
@@ -3986,7 +4029,7 @@ function drawRunSummaryScreen(delta) {
     ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1; ctx.stroke();
 
     const lines = [
-        { label: 'Score', value: String(s.score), color: '#FFD700' },
+        { label: 'Score', value: String(Math.round(s.score)), color: '#FFD700' },
         { label: 'Time', value: formatTime(s.time), color: '#FFF' },
         { label: 'Wave', value: String(s.wave), color: '#4FC3F7' },
         { label: 'Defeats', value: String(s.kills), color: '#FF6B6B' },
@@ -4047,12 +4090,14 @@ function triggerBurst() {
     burstActive = true;
     burstTimer = BURST_DURATION;
     burstCooldownTimer = BURST_COOLDOWN;
+    if (practiceActive) practiceProgress.burst = true;
     playSound('powerup');
 }
 
 function triggerSplatter() {
     if (splatterCooldownTimer > 0 || !player || !player.alive) return;
     splatterCooldownTimer = SPLATTER_COOLDOWN;
+    if (practiceActive) practiceProgress.splat = true;
     // Splatter also triggers a burst
     triggerBurst();
     const oppDir = OPPOSITES[player.dir];
@@ -4063,11 +4108,7 @@ function triggerSplatter() {
             if (ox*ox + oy*oy > SPLATTER_RADIUS * SPLATTER_RADIUS + 1) continue;
             const sx = cx + ox, sy = cy + oy;
             if (isOutOfBounds(sx, sy) || occupiedGrid[sx][sy] !== null) continue;
-            const hue = (player.hueStart + player.trail.length * 8 + (ox+oy)*20) % 360;
-            // Splatter hardens instantly (time = 0 so it's immediately deadly)
-            player.trail.push({ x: sx, y: sy, color: `hsl(${hue}, 90%, 55%)`, time: 0 });
-            occupiedGrid[sx][sy] = player.id;
-            trailTimeGrid[sx][sy] = 1; // ancient timestamp = already hardened
+            addTrailCell(player, sx, sy, true);
         }
     }
     playSound('npc_death');
@@ -4102,9 +4143,22 @@ function drawTutorialHint() {
 
 // ---- GAME FLOW ----
 function resetToTitle() {
+    if (practiceActive) { practiceActive = false; currentWave = practiceReturnWave; }
     gameState = TITLE;
     deathParticles = [];
     winParticles = [];
+}
+
+function startPractice() {
+    practiceReturnWave = currentWave;
+    practiceActive = true;
+    currentWave = 0;
+    startCountdown();
+}
+
+function finishPractice() {
+    if (practiceProgress.turns > 0 && practiceProgress.collected && practiceProgress.burst && practiceProgress.splat) tutorialCompleted = true;
+    resetToTitle(); saveSaveData();
 }
 
 function startCountdown() {
@@ -4139,145 +4193,66 @@ function updateCountdown(delta) {
 }
 
 function updateGame(delta) {
+    if (gameState !== PLAYING) return;
+    simulationAccumulator += Math.min(delta, 100);
+    while (simulationAccumulator + 0.00001 >= SIMULATION_STEP && gameState === PLAYING) {
+        simulationAccumulator = Math.max(0, simulationAccumulator - SIMULATION_STEP);
+        simulateGameStep(SIMULATION_STEP);
+    }
+}
+
+function simulateGameStep(delta) {
+    gameTime += delta;
     survivalTimer += delta;
-    moveAccumulator += delta;
-
-    // Speed boost: hat + accessory + dog modifiers
-    const accBuff = getAccessoryBuff();
-    const dogBuff = getDogBuff();
-    const wizResist = (accBuff.speedResist || 0);
-    const speedBonus = (accBuff.speedBonus || 0) + (dogBuff.speedBonus || 0);
-    let effectiveInterval = waveMoveInterval * (1 + wizResist) * (1 - speedBonus);
-    if (activePowerup && activePowerup.type.id === 'speed') effectiveInterval *= 0.6;
-
-    // Speed burst timers (burst does NOT change global interval — player gets extra moves instead)
-    if (burstActive) {
-        burstTimer -= delta;
-        if (burstTimer <= 0) burstActive = false;
-    }
-    if (burstCooldownTimer > 0) burstCooldownTimer -= delta;
-    if (splatterCooldownTimer > 0) splatterCooldownTimer -= delta;
-
-    // Trail widener timer
-    if (trailWidenerActive) {
-        trailWidenerTimer -= delta;
-        if (trailWidenerTimer <= 0) { trailWidenerActive = false; }
-    }
-
-    // Tutorial progression
-    if (currentWave === 0 && !tutorialCompleted && gameState === PLAYING) {
-        tutorialStepTimer += delta;
-        if (tutorialStep < TUTORIAL_STEPS.length && tutorialStepTimer >= TUTORIAL_STEPS[tutorialStep].duration) {
-            tutorialStepTimer = 0;
-            tutorialStep++;
-            if (tutorialStep >= TUTORIAL_STEPS.length) {
-                tutorialCompleted = true;
-                saveSaveData();
-            }
-        }
-    }
-
-    for (const u of unicorns) {
-        if (u.alive) u.trotPhase += TROT_SPEED * delta;
-    }
-    while (moveAccumulator >= effectiveInterval) {
-        moveAccumulator -= effectiveInterval;
-        if (gameState === PLAYING) moveAllUnicorns();
-    }
-
-    // Burst: give player extra solo moves (NPCs don't speed up)
-    if (burstActive && player && player.alive && gameState === PLAYING) {
-        playerBurstAccum += delta;
-        const burstInterval = effectiveInterval * 0.5; // player moves ~2x during burst
-        while (playerBurstAccum >= burstInterval) {
-            playerBurstAccum -= burstInterval;
-            // Move only the player
-            const { dx, dy } = dirToDelta(player.nextDir);
-            const nx = player.x + dx, ny = player.y + dy;
-            if (!isOutOfBounds(nx, ny)) {
-                const occ = occupiedGrid[nx][ny];
-                const ct = trailTimeGrid[nx] ? trailTimeGrid[nx][ny] : 0;
-                const fresh = ct > 0 && (performance.now() - ct) < FRESH_POOP_DURATION;
-                if (occ === null || fresh) {
-                    player.dir = player.nextDir;
-                    const hue = (player.hueStart + player.trail.length * 8) % 360;
-                    player.trail.push({ x: player.x, y: player.y, color: `hsl(${hue}, 100%, 60%)`, time: performance.now() });
-                    occupiedGrid[player.x][player.y] = player.id;
-                    trailTimeGrid[player.x][player.y] = performance.now();
-                    player.x = nx;
-                    player.y = ny;
-                    checkCollectiblePickup();
-                    checkPowerupPickup();
-                }
-            }
-        }
-    } else {
-        playerBurstAccum = 0;
-    }
-
-    // Scoring: survival score (hat + companion bonuses)
-    const hatBuff = getHatBuff();
-    const hatScoreMult = 1 + (hatBuff.scoreMult || 0);
-    const compBonus = 1 + getCompanionScoreBonus();
-    score += Math.floor(SCORE_PER_SECOND * scoreMultiplier * hatScoreMult * compBonus * delta / 1000);
+    score += SCORE_PER_SECOND * scoreMultiplier * (1 + getCompanionScoreBonus()) * delta / 1000;
     multiplierTimer += delta;
     if (multiplierTimer >= MULTIPLIER_GROWTH_INTERVAL) {
         multiplierTimer -= MULTIPLIER_GROWTH_INTERVAL;
         scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + MULTIPLIER_INCREMENT);
     }
-
-    // Collectible spawning
-    collectibleTimer += delta;
-    if (collectibleTimer >= COLLECTIBLE_SPAWN_INTERVAL) {
-        collectibleTimer -= COLLECTIBLE_SPAWN_INTERVAL;
-        spawnCollectible();
-    }
-
-    // Power-up spawning
-    powerupTimer += delta;
-    if (powerupTimer >= POWERUP_SPAWN_INTERVAL) {
-        powerupTimer -= POWERUP_SPAWN_INTERVAL;
-        spawnPowerup();
-    }
-
-    updatePowerup(delta);
-    updateCompanionPositions();
-    updateTrailFades();
-    updateParticles(delta);
-
-    // Collect particles
-    for (let i = collectParticles.length - 1; i >= 0; i--) {
-        const p = collectParticles[i];
-        p.x += p.vx; p.y += p.vy; p.life -= 0.04;
-        if (p.life <= 0) collectParticles.splice(i, 1);
-    }
-
-    // Screen shake
-    if (shakeTimer > 0) shakeTimer -= delta;
-    // Boss hit flash
-    if (bossHitFlash > 0) bossHitFlash -= delta;
-    // Unlock popup
-    if (unlockPopup) { unlockPopup.timer -= delta; if (unlockPopup.timer <= 0) unlockPopup = null; }
-
-    // Achievement popup
-    if (achievementPopup) achievementPopup.timer -= delta;
-
-    // Score attack timer
-    if (selectedGameMode === 'scoreattack') {
+    if (selectedGameMode === 'scoreattack' && !practiceActive) {
         scoreAttackTimer += delta;
-        const mode = GAME_MODES.find(m => m.id === 'scoreattack');
-        if (scoreAttackTimer >= mode.timeLimitMs && player && player.alive) {
-            gameState = WIN;
-            recordRound(true);
-            playSound('win');
-            spawnWinParticles();
+        if (scoreAttackTimer >= 60000) { finishRound(true); return; }
+    }
+    burstCooldownTimer = Math.max(0, burstCooldownTimer - delta);
+    splatterCooldownTimer = Math.max(0, splatterCooldownTimer - delta);
+    if (burstActive) { burstTimer -= delta; if (burstTimer <= 0) burstActive = false; }
+    if (trailWidenerActive) { trailWidenerTimer -= delta; if (trailWidenerTimer <= 0) trailWidenerActive = false; }
+    updatePowerup(delta);
+    const movers = [];
+    for (const u of unicorns) {
+        if (!u.alive) continue;
+        u.trotPhase += TROT_SPEED * delta;
+        u.moveElapsed += delta;
+        const interval = movementInterval(u);
+        if (u.moveElapsed + 0.00001 >= interval) {
+            u.moveElapsed -= interval;
+            movers.push(u);
         }
     }
-
-    checkAchievements();
+    if (movers.length) moveAllUnicorns(movers);
+    if (gameState !== PLAYING) return;
+    collectibleTimer += delta;
+    if (collectibleTimer >= COLLECTIBLE_SPAWN_INTERVAL) { collectibleTimer -= COLLECTIBLE_SPAWN_INTERVAL; spawnCollectible(); }
+    powerupTimer += delta;
+    if (powerupTimer >= POWERUP_SPAWN_INTERVAL && !practiceActive) { powerupTimer -= POWERUP_SPAWN_INTERVAL; spawnPowerup(); }
+    updateCompanionPositions(delta); updateTrailFades(); updateParticles(delta);
+    if (selectedGameMode === 'scoreattack' && !practiceActive) respawnScoreAttackRivals();
+    const dt = delta / 16;
+    for (let i = collectParticles.length - 1; i >= 0; i--) {
+        const p = collectParticles[i];
+        p.x += p.vx * dt; p.y += p.vy * dt; p.life -= 0.04 * dt;
+        if (p.life <= 0) collectParticles.splice(i, 1);
+    }
+    shakeTimer = Math.max(0, shakeTimer - delta);
+    bossHitFlash = Math.max(0, bossHitFlash - delta);
+    if (unlockPopup) { unlockPopup.timer -= delta; if (unlockPopup.timer <= 0) unlockPopup = null; }
+    if (achievementPopup) { achievementPopup.timer -= delta; if (achievementPopup.timer <= 0) achievementPopup = null; }
+    if (!practiceActive) checkAchievements();
 }
 
 // ---- MAIN LOOP ----
+
 function gameLoop(timestamp) {
     requestAnimationFrame(gameLoop);
     if (lastTimestamp === 0) { lastTimestamp = timestamp; return; }
@@ -4285,18 +4260,19 @@ function gameLoop(timestamp) {
     lastTimestamp = timestamp;
     const clampedDelta = Math.min(delta, 100);
 
+    if (typeof syncGameUI === 'function') syncGameUI();
     switch (gameState) {
         case TITLE:
-            drawTitleScreen();
+            if (typeof syncGameUI !== 'function') drawTitleScreen();
             break;
         case INSTRUCTIONS:
-            drawInstructionsScreen();
+            if (typeof syncGameUI !== 'function') drawInstructionsScreen();
             break;
         case MODE_SELECT:
-            drawModeSelectScreen(clampedDelta);
+            if (typeof syncGameUI !== 'function') drawModeSelectScreen(clampedDelta);
             break;
         case CUSTOMIZE:
-            drawCustomizeScreen(clampedDelta);
+            if (typeof syncGameUI !== 'function') drawCustomizeScreen(clampedDelta);
             break;
         case COUNTDOWN:
             for (const u of unicorns) u.trotPhase += TROT_SPEED * clampedDelta;
@@ -4318,14 +4294,14 @@ function gameLoop(timestamp) {
             drawHUD();
             drawActivePowerup();
             drawBossHealthBar();
-            drawTutorialHint();
-            drawAchievementPopup(clampedDelta);
+            if (typeof syncGameUI !== 'function') drawTutorialHint();
+            drawAchievementPopup(0);
             drawUnlockPopup();
             // Ghost mode visual indicator
             if (activePowerup && activePowerup.type.id === 'ghost' && player && player.alive) {
                 ctx.globalAlpha = 0.15 + 0.1 * Math.sin(performance.now() * 0.01);
                 ctx.fillStyle = '#E0E0FF';
-                ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+                ctx.strokeStyle = '#E0E0FF'; ctx.lineWidth = 6; ctx.strokeRect(4, 4, CANVAS_WIDTH - 8, CANVAS_HEIGHT - 8);
                 ctx.globalAlpha = 1;
             }
             break;
@@ -4336,7 +4312,7 @@ function gameLoop(timestamp) {
             drawPowerups();
             drawAllUnicorns();
             drawHUD();
-            drawPauseOverlay();
+            if (typeof syncGameUI !== 'function') drawPauseOverlay();
             break;
         case GAME_OVER:
             updateParticles(clampedDelta);
@@ -4345,22 +4321,26 @@ function gameLoop(timestamp) {
             drawAllUnicorns();
             drawParticles(deathParticles);
             drawHUD();
-            drawGameOverScreen();
+            if (typeof syncGameUI !== 'function') drawGameOverScreen();
             break;
         case WIN:
             updateParticles(clampedDelta);
-            updateTrailFades();
             drawBackground();
             drawTrails();
             drawAllUnicorns();
             drawHUD();
-            drawWinScreen();
+            if (typeof syncGameUI !== 'function') drawWinScreen();
             break;
         case RUN_SUMMARY:
-            drawRunSummaryScreen(clampedDelta);
+            if (typeof syncGameUI !== 'function') drawRunSummaryScreen(clampedDelta);
             break;
     }
 }
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden && gameState === PLAYING) togglePause();
+});
+window.addEventListener('blur', () => { if (gameState === PLAYING) togglePause(); });
 
 // ---- START ----
 loadSaveData();
