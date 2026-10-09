@@ -128,6 +128,7 @@ drawTrails = function () {
         if (fade <= 0) continue;
         ctx.globalAlpha = fade;
         for (const seg of u.trail) {
+            if (!isWorldVisible(seg.x * GRID_SIZE, seg.y * GRID_SIZE)) continue;
             const hue = Math.round(Number(seg.color.match(/hsl\((\d+)/)?.[1] || 0) / 20) * 20;
             const fresh = gameTime - seg.time < FRESH_POOP_DURATION;
             ctx.drawImage(fantasyTrailStamp(hue, fresh), seg.x * GRID_SIZE - GRID_SIZE / 2, seg.y * GRID_SIZE - GRID_SIZE / 2);
@@ -216,11 +217,20 @@ drawSpriteUnicorn = function (avatarId, accessoryId, x, y, dir, size, trot, g = 
 };
 drawUnicorn = function (u) {
     if (!u.alive) return;
-    const pos = visualPosition(u), size = GRID_SIZE * (u.isBoss ? 3.7 : u.isPlayer ? 3.0 : 2.65);
+    const pos = visualPosition(u), size = GRID_SIZE * (u.isBoss ? 3.25 : u.isPlayer ? 2.6 : 2.35);
+    if (!isWorldVisible(pos.x, pos.y)) return;
     const avatar = u.isPlayer ? selectedAvatarId : u.avatarId || (u.isBoss ? 'shadow' : 'candy');
     ctx.save();
     fantasyEllipse(ctx, pos.x, pos.y + size * .25, size * .3, size * .12, '#020d2090');
-    const accent = gameTime < u.invulnerableUntil ? '#a8fff0' : '#ffedb9';
+    if (u.isBoss) {
+        const color = u.bossType.id === 'charger' ? '#ff9eb5' : '#cfb4ff';
+        ctx.strokeStyle = color; ctx.lineWidth = GRID_SIZE * .07;
+        ctx.beginPath(); ctx.ellipse(pos.x, pos.y + size * .22, size * .42, size * .19, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.font = `800 ${GRID_SIZE * .45}px system-ui`; ctx.textAlign = 'center'; ctx.fillStyle = color;
+        ctx.fillText(u.bossType.id.toUpperCase(), pos.x, pos.y - size * .58);
+        for (let i = 0; i < u.maxHealth; i++) fantasyEllipse(ctx, pos.x + (i - (u.maxHealth - 1) / 2) * GRID_SIZE * .3, pos.y - size * .43, GRID_SIZE * .09, GRID_SIZE * .09, i < u.health ? color : '#ffffff35');
+    }
+    const accent = gameTime < heartRescueUntil ? '#ffb8d7' : gameTime < u.invulnerableUntil ? '#a8fff0' : '#ffedb9';
     if (u.isPlayer) {
         ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(pos.x, pos.y + size * .22, size * .35, size * .14, 0, 0, Math.PI * 2); ctx.stroke();
         const { dx, dy } = dirToDelta(u.dir);
@@ -236,6 +246,7 @@ drawUnicorn = function (u) {
         ctx.globalAlpha = 1;
     }
     if (u.isPlayer && activePowerup?.type.id === 'ghost') ctx.globalAlpha = .65;
+    if (u.isPlayer && gameTime < heartRescueUntil) ctx.globalAlpha = .75;
     drawSpriteUnicorn(avatar, u.isPlayer ? selectedAccessoryId : 'none', pos.x, pos.y, u.dir, size, u.trotPhase);
     ctx.globalAlpha = 1;
     if (u.isPlayer && survivalTimer < 5000) {
@@ -266,6 +277,7 @@ drawAllUnicorns = function () {
 };
 drawCollectibles = function () {
     for (const c of collectibles) {
+        if (!isWorldVisible((c.x + .5) * GRID_SIZE, (c.y + .5) * GRID_SIZE)) continue;
         const x = (c.x + .5) * GRID_SIZE, y = (c.y + .5) * GRID_SIZE;
         const bob = reducedMotion ? 0 : Math.sin(fantasyTime * .0025 + c.x) * GRID_SIZE * .1;
         const r = GRID_SIZE * .48;
@@ -284,6 +296,7 @@ drawCollectibles = function () {
 };
 drawPowerups = function () {
     for (const p of powerups) {
+        if (!isWorldVisible((p.x + .5) * GRID_SIZE, (p.y + .5) * GRID_SIZE)) continue;
         const x = (p.x + .5) * GRID_SIZE, y = (p.y + .5) * GRID_SIZE, r = GRID_SIZE * .7;
         ctx.save(); ctx.translate(x, y); ctx.rotate(reducedMotion ? 0 : fantasyTime * .001);
         ctx.strokeStyle = p.type.color; ctx.lineWidth = 2; ctx.shadowColor = p.type.color; ctx.shadowBlur = 15;
@@ -317,22 +330,95 @@ function drawFantasyEffects() {
         ctx.restore();
     }
 }
-drawCountdownScreen = function () { drawBackground(); drawCollectibles(); drawAllUnicorns(); drawHUD(); };
+drawCountdownScreen = function () { drawArenaWorld(); drawHUD(); };
 const fallbackParticles = drawParticles;
 drawParticles = function (particles) { if (!reducedMotion) fallbackParticles(particles); };
 const fallbackActivePowerup = drawActivePowerup, fallbackBossBar = drawBossHealthBar;
 drawActivePowerup = function () { if (typeof syncGameUI !== 'function') fallbackActivePowerup(); };
 drawBossHealthBar = function () { if (typeof syncGameUI !== 'function') fallbackBossBar(); };
 
+function drawBossTelegraph() {
+    if (!boss?.alive || !['telegraph', 'attack', 'recover'].includes(boss.phase)) return;
+    const x = (boss.x + .5) * GRID_SIZE, y = (boss.y + .5) * GRID_SIZE;
+    ctx.save(); ctx.lineWidth = GRID_SIZE * .09;
+    ctx.strokeStyle = boss.phase === 'recover' ? '#aaffde' : '#ffb3d0';
+    if (boss.phase === 'recover') {
+        ctx.beginPath(); ctx.arc(x, y, GRID_SIZE * 1.7, 0, Math.PI * 2); ctx.stroke();
+    } else if (boss.bossType.id === 'charger') {
+        const d = dirToDelta(boss.attackDir), length = GRID_SIZE * 10;
+        ctx.translate(x, y); ctx.rotate(Math.atan2(d.dy, d.dx));
+        ctx.fillStyle = '#ff60852a'; ctx.fillRect(0, -GRID_SIZE * .55, length, GRID_SIZE * 1.1);
+        ctx.strokeRect(0, -GRID_SIZE * .55, length, GRID_SIZE * 1.1);
+        for (let i = 2; i < 10; i += 2) {
+            ctx.beginPath(); ctx.moveTo(i * GRID_SIZE - 8, -8); ctx.lineTo(i * GRID_SIZE, 0); ctx.lineTo(i * GRID_SIZE - 8, 8); ctx.stroke();
+        }
+    } else if (boss.teleportTarget) {
+        const tx = (boss.teleportTarget.x + .5) * GRID_SIZE, ty = (boss.teleportTarget.y + .5) * GRID_SIZE;
+        ctx.strokeStyle = '#dbbdff'; ctx.fillStyle = '#b882ff38';
+        ctx.beginPath(); ctx.arc(tx, ty, GRID_SIZE * 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        fantasyStar(ctx, tx, ty, GRID_SIZE * .6, '#f1dcff');
+        ctx.font = `700 ${GRID_SIZE * .55}px system-ui`; ctx.textAlign = 'center'; ctx.fillStyle = '#f1dcff'; ctx.fillText('WARP', tx, ty - GRID_SIZE * 2.4);
+    }
+    ctx.restore();
+}
+
+function drawMinimap(g, width, height) {
+    g.clearRect(0, 0, width, height);
+    const scale = Math.min((width - 12) / CANVAS_WIDTH, (height - 12) / CANVAS_HEIGHT);
+    const ox = (width - CANVAS_WIDTH * scale) / 2, oy = (height - CANVAS_HEIGHT * scale) / 2;
+    g.save(); g.translate(ox, oy); g.scale(scale, scale);
+    g.fillStyle = '#183642'; g.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    g.strokeStyle = '#c8eee377'; g.lineWidth = 1.5 / scale; g.strokeRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    for (const u of unicorns) {
+        if (!u.alive && gameTime - u.deathTime > TRAIL_FADE_DURATION) continue;
+        g.fillStyle = u.isPlayer ? '#d4cf9f88' : '#bd94ca80';
+        for (const seg of u.trail) g.fillRect(seg.x * GRID_SIZE, seg.y * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+    }
+    g.fillStyle = '#ffb1d9';
+    for (const c of collectibles) if (c.type.id === 'heart') g.fillRect(c.x * GRID_SIZE, c.y * GRID_SIZE, 2.5 / scale, 2.5 / scale);
+    g.fillStyle = '#b4eedd18'; g.fillRect(camera.x, camera.y, VIEW_WIDTH, VIEW_HEIGHT);
+    g.strokeStyle = '#d3f2e57a'; g.lineWidth = 1 / scale; g.strokeRect(camera.x, camera.y, VIEW_WIDTH, VIEW_HEIGHT);
+    for (const u of unicorns) if (u.alive) {
+        const p = visualPosition(u);
+        fantasyEllipse(g, p.x, p.y, (u.isPlayer ? 3 : u.isBoss ? 3.5 : 2) / scale, (u.isPlayer ? 3 : u.isBoss ? 3.5 : 2) / scale, u.isPlayer ? '#fff1b0' : u.isBoss ? '#ff93ca' : '#b2dfef');
+    }
+    if (boss?.teleportTarget) {
+        g.strokeStyle = '#e3c8ff'; g.lineWidth = 1.5 / scale;
+        g.beginPath(); g.arc((boss.teleportTarget.x + .5) * GRID_SIZE, (boss.teleportTarget.y + .5) * GRID_SIZE, 4 / scale, 0, Math.PI * 2); g.stroke();
+    }
+    g.restore();
+}
+
+function drawArenaRadar() {
+    if (![COUNTDOWN, PLAYING, PAUSED].includes(gameState)) return;
+    const scale = VIEW_WIDTH / window.innerWidth;
+    const left = 22 * scale, right = VIEW_WIDTH - left;
+    const top = 94 * scale, bottom = VIEW_HEIGHT - 102 * scale;
+    if (bottom <= top) return;
+    const cx = VIEW_WIDTH / 2, cy = (top + bottom) / 2;
+    const targets = unicorns.filter(u => !u.isPlayer && u.alive).map(u => ({ x: (u.x + .5) * GRID_SIZE, y: (u.y + .5) * GRID_SIZE, boss: u.isBoss }));
+    if (boss?.teleportTarget) targets.push({ x: (boss.teleportTarget.x + .5) * GRID_SIZE, y: (boss.teleportTarget.y + .5) * GRID_SIZE, boss: true, warp: true });
+    for (const target of targets) {
+        const x = target.x - camera.x, y = target.y - camera.y;
+        if (x >= 0 && x <= VIEW_WIDTH && y >= 0 && y <= VIEW_HEIGHT) continue;
+        const dx = x - cx, dy = y - cy;
+        const k = Math.min((dx >= 0 ? right - cx : cx - left) / Math.max(.01, Math.abs(dx)), (dy >= 0 ? bottom - cy : cy - top) / Math.max(.01, Math.abs(dy)));
+        const px = cx + dx * k, py = cy + dy * k;
+        ctx.save(); ctx.translate(px, py); ctx.rotate(Math.atan2(dy, dx));
+        ctx.fillStyle = target.boss ? '#f4aad9' : '#b5dce9'; ctx.strokeStyle = '#09253d'; ctx.lineWidth = 2 * scale;
+        ctx.beginPath(); ctx.moveTo(8 * scale, 0); ctx.lineTo(-4 * scale, -5 * scale); ctx.lineTo(-4 * scale, 5 * scale); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+    }
+}
+
 function drawFantasyNotice(text, timer, slot = 0) {
     if (gameState !== PLAYING || survivalTimer < 1000 || practiceActive) return;
-    const width = Math.min(CANVAS_WIDTH - GRID_SIZE * 2, GRID_SIZE * 17), height = GRID_SIZE * 1.35;
-    const x = (CANVAS_WIDTH - width) / 2, y = CANVAS_HEIGHT - GRID_SIZE * (7 + slot * 1.6);
+    const width = Math.min(VIEW_WIDTH - GRID_SIZE * 2, GRID_SIZE * 17), height = GRID_SIZE * 1.35;
+    const x = (VIEW_WIDTH - width) / 2, y = VIEW_HEIGHT - GRID_SIZE * (7 + slot * 1.6);
     ctx.save(); ctx.globalAlpha = Math.min(1, timer / 350);
     roundRect(ctx, x, y, width, height, GRID_SIZE * .4); ctx.fillStyle = '#0b213be8'; ctx.fill();
     ctx.strokeStyle = '#c6f0df50'; ctx.lineWidth = 1; ctx.stroke();
     ctx.font = `600 ${GRID_SIZE * .62}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#e7f1d9';
-    ctx.fillText('✦  ' + text, CANVAS_WIDTH / 2, y + height / 2, width - GRID_SIZE); ctx.restore();
+    ctx.fillText('✦  ' + text, VIEW_WIDTH / 2, y + height / 2, width - GRID_SIZE); ctx.restore();
 }
 drawUnlockPopup = function () {
     if (unlockPopup) drawFantasyNotice(unlockPopup.text.replace(/^\S+\s/, ''), unlockPopup.timer);

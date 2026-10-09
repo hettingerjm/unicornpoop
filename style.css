@@ -151,3 +151,11 @@ body[data-scene="game"] .modal .primary { background: #d8eee3; color: #203942; b
     .ability { width: 68px; height: 68px; min-width: 68px; min-height: 68px; padding: 6px; border-radius: 22px; }.ability-icon { font-size: 22px; }.ability strong { font-size: 10px; }.ability small { font-size: 8px; }.ability-controls { gap: 10px; }.arena-controls { bottom: max(12px, env(safe-area-inset-bottom)); }.steering-hint { padding: 8px 12px; font-size: 10px; }
     .practice-tip { bottom: 95px; padding: 9px 16px; }.combat-status { top: 74px; }.countdown-cue > strong { font-size: 82px; }.modal.crash-inspection { max-width: calc(100vw - 200px); }.modal { max-height: calc(100dvh - 24px); }
 }
+
+/* The map anchors the player while the larger arena scrolls beneath the HUD. */
+.arena-map { position: fixed; z-index: 8; top: max(96px, calc(env(safe-area-inset-top) + 82px)); left: max(22px, env(safe-area-inset-left)); width: 136px; padding: 9px; border: 1px solid #b4e3e530; border-radius: 15px; background: #071a2bc9; color: #b9d8d9; pointer-events: none; }
+.arena-map > div { display: flex; align-items: center; justify-content: space-between; }.arena-map small { font-size: 9px; }.arena-map > small { display: block; text-align: center; font-size: 8px; margin-top: 3px; color: #e2bfd1; }
+#hudLives { font-size: 12px; color: #ffbddc; font-weight: 800; }#arenaMinimap { width: 100%; height: auto; }
+.boss-status { width: min(310px, 60vw); }.boss-status small { display: block; font-size: 10px; color: #d4e4e7; margin-top: 8px; line-height: 1.35; }.heart-rescue { color: #ffcae2; border-color: #ffb3d052; }
+@media (max-width: 580px) { .arena-map { top: 86px; left: 12px; width: 100px; padding: 7px; border-radius: 12px; }.combat-status { left: auto; right: 12px; transform: none; max-width: calc(100vw - 132px); }.boss-status { width: min(240px, calc(100vw - 132px)); }.boss-status small { font-size: 9px; } }
+@media (max-height: 500px) and (min-width: 581px) { .arena-map { top: 78px; width: 112px; padding: 7px; }.boss-status { padding: 7px 12px; }.boss-status small { font-size: 9px; margin-top: 5px; } }

@@ -6,6 +6,7 @@
 // ---- SETTINGS (tweak these!) ----
 let CANVAS_WIDTH = 1280;
 let CANVAS_HEIGHT = 720;
+let VIEW_WIDTH = 1280, VIEW_HEIGHT = 720;
 let GRID_SIZE = 16;                  // pixels per grid cell
 const MOVE_INTERVAL = 100;          // ms between moves (lower = faster)
 const NPC_COUNT = 3;                // number of NPC unicorns
@@ -158,16 +159,18 @@ const HATS = [
 
 // ---- PROGRESSIVE DIFFICULTY (wave system) ----
 // Each wave: { npcCount, moveInterval (ms), npcLookahead, npcMistakeChance }
-const WAVES = [
-    { npcCount: 2, moveInterval: 110, lookahead: 4, mistakeChance: 0.06 },   // Wave 1 (easy)
-    { npcCount: 3, moveInterval: 100, lookahead: 5, mistakeChance: 0.04 },   // Wave 2
-    { npcCount: 3, moveInterval: 90,  lookahead: 6, mistakeChance: 0.03 },   // Wave 3
-    { npcCount: 4, moveInterval: 85,  lookahead: 6, mistakeChance: 0.025 },  // Wave 4
-    { npcCount: 4, moveInterval: 80,  lookahead: 7, mistakeChance: 0.02 },   // Wave 5
-    { npcCount: 5, moveInterval: 75,  lookahead: 7, mistakeChance: 0.015 },  // Wave 6
-    { npcCount: 5, moveInterval: 70,  lookahead: 8, mistakeChance: 0.01 },   // Wave 7
-    { npcCount: 6, moveInterval: 65,  lookahead: 9, mistakeChance: 0.008 },  // Wave 8+
-];
+function waveConfig(wave) {
+    const chapter = Math.floor(Math.max(0, wave) / 5), stage = Math.max(0, wave) % 5;
+    // A new chapter eases the pace after its boss. Later waves add tactical
+    // pressure without accelerating beyond a readable, bounded speed.
+    return {
+        npcCount: Math.min(6, [2, 2, 3, 3, 3][stage] + Math.floor(chapter / 2)),
+        moveInterval: Math.max(86, [110, 106, 103, 100, 106][stage] - chapter * 3),
+        lookahead: Math.min(8, 4 + Math.floor(stage / 2) + Math.floor(chapter / 2)),
+        mistakeChance: Math.max(.018, .06 - stage * .006 - chapter * .005),
+        surviveMs: stage === 4 ? 0 : Math.min(55000, [35000, 40000, 45000, 45000][stage] + chapter * 5000),
+    };
+}
 
 // ---- MANE CUSTOMIZATION ----
 const MANE_COLOR_PALETTE = [
@@ -434,13 +437,19 @@ let waveNpcCount = 2;
 let waveMoveInterval = 110;
 let waveLookahead = 4;
 let waveMistakeChance = 0.06;
+let waveSurvivalGoal = 35000;
+
+function survivalGoal() {
+    return practiceActive || isBossWave || selectedGameMode === 'scoreattack' ? 0 : waveSurvivalGoal;
+}
 
 function applyWave() {
-    const w = WAVES[Math.min(currentWave, WAVES.length - 1)];
+    const w = waveConfig(currentWave);
     waveNpcCount = w.npcCount;
     waveMoveInterval = w.moveInterval;
     waveLookahead = w.lookahead;
     waveMistakeChance = w.mistakeChance;
+    waveSurvivalGoal = w.surviveMs;
 }
 
 // ---- CUSTOMIZATION STATE ----
@@ -458,6 +467,9 @@ let rainbowPoints = 0;
 let ownedAccessories = ['none'];      // accessory IDs the player has purchased
 let dogGhostUsed = false;             // ghost pup one-time trail pass
 let dogShieldUsed = false;            // shield pup one-time crash save
+let heartLives = 0;
+const MAX_HEART_LIVES = 3, HEART_RESCUE_DURATION = 1400;
+let heartRescueUntil = 0;
 let customizeTab = 'avatar';  // 'avatar' | 'accessory' | 'mane' | 'dogs'
 let maneEditStrand = 0;     // which strand index is selected for color editing
 
@@ -689,18 +701,69 @@ const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 
 let isMobile = isTouchDevice || window.innerWidth <= 900 || window.innerHeight <= 500;
 let arenaMoveScale = 1;
 let arenaAspect = CANVAS_WIDTH / CANVAS_HEIGHT;
+const camera = { x: 0, y: 0, leadX: 0, leadY: 0 };
 
-// Choose a board for the actual screen at the start of each round. A phone gets
-// twenty cells on its short side, rather than a miniature eighty-column board.
+function configureView() {
+    const aspect = window.innerWidth / window.innerHeight;
+    const shortSide = (isMobile ? 24 : 30) * GRID_SIZE;
+    VIEW_WIDTH = aspect >= 1 ? shortSide * aspect : shortSide;
+    VIEW_HEIGHT = aspect >= 1 ? shortSide : shortSide / aspect;
+    const fit = Math.min(1, CANVAS_WIDTH / VIEW_WIDTH, CANVAS_HEIGHT / VIEW_HEIGHT);
+    VIEW_WIDTH *= fit; VIEW_HEIGHT *= fit;
+}
+function clampCamera() {
+    camera.x = Math.max(0, Math.min(CANVAS_WIDTH - VIEW_WIDTH, camera.x));
+    camera.y = Math.max(0, Math.min(CANVAS_HEIGHT - VIEW_HEIGHT, camera.y));
+}
+function resetCamera() {
+    camera.leadX = camera.leadY = 0;
+    if (player) {
+        camera.x = (player.x + .5) * GRID_SIZE - VIEW_WIDTH / 2;
+        camera.y = (player.y + .5) * GRID_SIZE - VIEW_HEIGHT / 2;
+    }
+    clampCamera();
+}
+function updateCamera(delta) {
+    if (!player || ![PLAYING, COUNTDOWN].includes(gameState)) return;
+    const pos = visualPosition(player), dir = dirToDelta(player.dir);
+    const blend = reducedMotion ? 1 : 1 - Math.exp(-delta / 170);
+    camera.leadX += (dir.dx * GRID_SIZE * 3 - camera.leadX) * blend;
+    camera.leadY += (dir.dy * GRID_SIZE * 3 - camera.leadY) * blend;
+    const tx = pos.x + camera.leadX - VIEW_WIDTH / 2;
+    const ty = pos.y + camera.leadY - VIEW_HEIGHT / 2;
+    camera.x += (tx - camera.x) * blend;
+    camera.y += (ty - camera.y) * blend;
+    // A burst or sudden resize must never leave the player off screen.
+    camera.x = Math.max(pos.x - VIEW_WIDTH * .78, Math.min(pos.x - VIEW_WIDTH * .22, camera.x));
+    camera.y = Math.max(pos.y - VIEW_HEIGHT * .78, Math.min(pos.y - VIEW_HEIGHT * .22, camera.y));
+    clampCamera();
+}
+function isWorldVisible(x, y, padding = GRID_SIZE * 3) {
+    return x >= camera.x - padding && y >= camera.y - padding && x <= camera.x + VIEW_WIDTH + padding && y <= camera.y + VIEW_HEIGHT + padding;
+}
+function drawArenaWorld(shake = false) {
+    ctx.save();
+    if (shake) applyShake();
+    ctx.translate(-camera.x, -camera.y);
+    drawBackground(); drawTrails(); drawCollectibles(); drawPowerups();
+    if (typeof drawBossTelegraph === 'function') drawBossTelegraph();
+    drawAllUnicorns(); drawParticles(deathParticles); drawParticles(collectParticles);
+    if (gameState === WIN) drawParticles(winParticles);
+    if (typeof drawFantasyEffects === 'function') drawFantasyEffects();
+    ctx.restore();
+    if (typeof drawArenaRadar === 'function') drawArenaRadar();
+}
+
+// The collision world stays the same size across devices. A phone sees 24 cells
+// on its short side; the camera explores the rest without shrinking characters.
 function configureArenaViewport() {
     const width = Math.max(240, window.innerWidth || 1280);
     const height = Math.max(240, window.innerHeight || 720);
     isMobile = isTouchDevice || width <= 900 || height <= 500;
     GRID_SIZE = isMobile ? 32 : 24;
-    const shortCells = isMobile ? 20 : 30;
     const aspect = width / height;
-    COLS = Math.max(14, Math.round(aspect >= 1 ? shortCells * aspect : shortCells));
-    ROWS = Math.max(14, Math.round(aspect >= 1 ? shortCells : shortCells / aspect));
+    COLS = aspect >= 1 ? 66 : 44;
+    ROWS = aspect >= 1 ? 44 : 66;
     CANVAS_WIDTH = COLS * GRID_SIZE;
     CANVAS_HEIGHT = ROWS * GRID_SIZE;
     arenaAspect = aspect;
@@ -920,6 +983,7 @@ function spawnUnicorns() {
     freeHitUsed = false;
     dogGhostUsed = false;
     dogShieldUsed = false;
+    heartLives = 0; heartRescueUntil = 0;
     burstActive = false;
     burstTimer = 0;
     burstCooldownTimer = 0;
@@ -946,17 +1010,17 @@ function spawnUnicorns() {
 
     // Determine if this is a boss wave
     isBossWave = !practiceActive && ((selectedGameMode === 'bossrush') ||
-                 ((currentWave + 1) % BOSS_WAVE_INTERVAL === 0 && currentWave > 0));
+                 (selectedGameMode !== 'scoreattack' && (currentWave + 1) % BOSS_WAVE_INTERVAL === 0 && currentWave > 0));
 
     if (isBossWave) {
         spawnBoss();
     } else {
         const spawnPoints = [
-            { x: Math.floor(COLS * 0.85), y: Math.floor(ROWS * 0.25), dir: 'left' },
+            { x: Math.floor(COLS * 0.82), y: Math.floor(ROWS * 0.40), dir: 'down' },
             { x: Math.floor(COLS * 0.15), y: Math.floor(ROWS * 0.75), dir: 'right' },
             { x: Math.floor(COLS * 0.85), y: Math.floor(ROWS * 0.75), dir: 'left' },
             { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.50), dir: 'up' },
-            { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.15), dir: 'down' },
+            { x: Math.floor(COLS * 0.60), y: Math.floor(ROWS * 0.12), dir: 'right' },
             { x: Math.floor(COLS * 0.50), y: Math.floor(ROWS * 0.85), dir: 'up' },
         ];
 
@@ -966,13 +1030,17 @@ function spawnUnicorns() {
             const hueStart = (i + 1) * 70;
             const npc = createUnicorn(`npc${i}`, sp.x, sp.y, sp.dir, false, hueStart, NPC_THEMES[i % NPC_THEMES.length]);
             npc.avatarId = ['candy', 'ice', 'neon', 'royal', 'shadow', 'candy'][i];
+            npc.personality = currentWave < 2 ? NPC_PERSONALITIES[i % 2 ? 2 : 0] : NPC_PERSONALITIES[(i + Math.floor(currentWave / 5)) % 4];
             unicorns.push(npc);
         }
     }
 
     // Pre-seed the map with collectibles so it feels lively from the start
     for (let i = 0; i < 12; i++) spawnCollectible();
-    if (practiceActive) collectibles.unshift({ x: px + 7, y: py, type: COLLECTIBLE_TYPES[0], spawnTime: gameTime });
+    const firstX = px + (practiceActive ? 7 : 5);
+    collectibles = collectibles.filter(c => c.x !== firstX || c.y !== py);
+    collectibles.unshift({ x: firstX, y: py, type: COLLECTIBLE_TYPES[practiceActive ? 0 : 2], spawnTime: gameTime });
+    resetCamera();
 }
 
 // ---- INPUT HANDLING ----
@@ -1068,8 +1136,8 @@ document.addEventListener('fullscreenchange', () => {
 // ---- TOUCH INPUT ----
 function screenToCanvas(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const scaleX = CANVAS_WIDTH / rect.width;
-    const scaleY = CANVAS_HEIGHT / rect.height;
+    const scaleX = VIEW_WIDTH / rect.width;
+    const scaleY = VIEW_HEIGHT / rect.height;
     return {
         x: (clientX - rect.left) * scaleX,
         y: (clientY - rect.top) * scaleY,
@@ -1251,6 +1319,8 @@ function rotateArena() {
     for (const u of unicorns) {
         [u.x, u.y] = cell(u.x, u.y); [u.previousX, u.previousY] = cell(u.previousX, u.previousY);
         u.dir = directions[u.dir]; u.nextDir = directions[u.nextDir];
+        if (u.attackDir) u.attackDir = directions[u.attackDir];
+        if (u.teleportTarget) [u.teleportTarget.x, u.teleportTarget.y] = cell(u.teleportTarget.x, u.teleportTarget.y);
         for (const seg of u.trail) [seg.x, seg.y] = cell(seg.x, seg.y);
     }
     for (const item of [...collectibles, ...powerups]) [item.x, item.y] = cell(item.x, item.y);
@@ -1269,10 +1339,11 @@ function rotateArena() {
 function resizeCanvas() {
     const screenW = window.innerWidth || document.documentElement.clientWidth;
     const screenH = window.innerHeight || document.documentElement.clientHeight;
+    let rotated = false;
     if ([COUNTDOWN, PLAYING, PAUSED, GAME_OVER, WIN].includes(gameState)
         && occupiedGrid.length && (screenW > screenH) !== (arenaAspect > 1)) {
         if (gameState === PLAYING) togglePause();
-        rotateArena(); arenaAspect = screenW / screenH;
+        rotateArena(); arenaAspect = screenW / screenH; rotated = true;
     }
     if (rotateOverlay) rotateOverlay.style.display = 'none';
     canvas.style.display = 'block';
@@ -1286,7 +1357,9 @@ function resizeCanvas() {
     if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
         canvas.width = pixelWidth; canvas.height = pixelHeight;
     }
-    ctx.setTransform(pixelWidth / CANVAS_WIDTH, 0, 0, pixelHeight / CANVAS_HEIGHT, 0, 0);
+    configureView();
+    if (rotated) resetCamera(); else clampCamera();
+    ctx.setTransform(pixelWidth / VIEW_WIDTH, 0, 0, pixelHeight / VIEW_HEIGHT, 0, 0);
     if (typeof syncGameUI === 'function') syncGameUI.boundsDirty = true;
 }
 
@@ -1375,11 +1448,12 @@ function handleCustomizeTouch(cx, cy) {
 
 // ---- COLLECTIBLE SYSTEM ----
 function spawnCollectible() {
-    if (collectibles.length >= 16) return;
+    if (collectibles.length >= 24) return;
     const type = COLLECTIBLE_TYPES[Math.floor(Math.random() * COLLECTIBLE_TYPES.length)];
     for (let attempt = 0; attempt < 50; attempt++) {
-        const x = randomInt(2, COLS - 3);
-        const y = randomInt(2, ROWS - 3);
+        const nearby = player && attempt < 25 && Math.random() < .7;
+        const x = nearby ? randomInt(Math.max(2, player.x - 10), Math.min(COLS - 3, player.x + 14)) : randomInt(2, COLS - 3);
+        const y = nearby ? randomInt(Math.max(2, player.y - 10), Math.min(ROWS - 3, player.y + 14)) : randomInt(2, ROWS - 3);
         if (occupiedGrid[x][y] === null && !collectibles.some(c => c.x === x && c.y === y) && !unicorns.some(u => u.alive && u.x === x && u.y === y)) {
             collectibles.push({ x, y, type, spawnTime: gameTime });
             return;
@@ -1404,6 +1478,10 @@ function checkCollectiblePickup() {
             if (practiceActive) practiceProgress.collected = true;
             lastCollectTime = performance.now();
             if (c.type.id === 'widener') { trailWidenerActive = true; trailWidenerTimer = WIDENER_DURATION; }
+            if (c.type.id === 'heart') {
+                heartLives = Math.min(MAX_HEART_LIVES, heartLives + 1);
+                if (typeof fantasyEvent === 'function') fantasyEvent('heart', c.x, c.y, '♥ Spare life', '#ffb8d7');
+            }
             playSound('collect');
             // Sparkle particles
             const px = c.x * GRID_SIZE + GRID_SIZE / 2;
@@ -1559,36 +1637,112 @@ function drawActivePowerup() {
 
 // ---- BOSS SYSTEM ----
 function spawnBoss() {
-    const bossIdx = Math.floor(currentWave / BOSS_WAVE_INTERVAL) % BOSS_TYPES.length;
+    const encounter = selectedGameMode === 'bossrush' ? currentWave : Math.floor(currentWave / BOSS_WAVE_INTERVAL);
+    const bossIdx = encounter % BOSS_TYPES.length;
     const bt = BOSS_TYPES[bossIdx];
     const theme = {
         body: bt.bodyColor, belly: bt.belly, border: bt.border, glow: `rgba(255,23,68,0.3)`,
         hornGradient: bt.hornGradient, maneColors: bt.maneColors, tailColors: bt.tailColors,
         hoofColor: bt.hoofColor, eyeColor: bt.eyeColor, label: 'BOSS',
     };
-    const spawnX = Math.floor(COLS * 0.5);
-    const spawnY = Math.floor(ROWS * 0.5);
+    const spawnX = Math.floor(COLS * 0.65);
+    const spawnY = Math.floor(ROWS * 0.55);
     boss = createUnicorn('boss', spawnX, spawnY, 'left', false, 0, theme);
     boss.isBoss = true;
     boss.bossType = bt;
+    boss.avatarId = bt.id === 'charger' ? 'candy' : 'shadow';
+    boss.personality = { aggressiveness: .45, mistakeMod: .3, lookaheadMod: 1.2 };
     // Boss number (1st boss, 2nd boss, etc.) — scales health from easy to hard
-    const bossNumber = Math.floor(currentWave / BOSS_WAVE_INTERVAL) + 1;
-    const scaledHealth = Math.min(12, Math.floor(bt.baseHealth + bossNumber * 0.8));
+    const scaledHealth = Math.min(6, bt.baseHealth + Math.floor(encounter / 2));
     boss.health = scaledHealth;
     boss.maxHealth = scaledHealth;
+    boss.phase = 'patrol'; boss.phaseTimer = 3800;
+    boss.damageReadyAt = 0; boss.enraged = false;
+    boss.attackDir = 'left'; boss.teleportTarget = null;
     unicorns.push(boss);
 }
 
 function damageBoss(amount) {
-    if (!boss || !boss.alive) return;
+    if (!boss || !boss.alive || gameTime < boss.damageReadyAt) return false;
+    boss.damageReadyAt = gameTime + 900;
     boss.health -= amount;
     bossHitFlash = 200;
     triggerShake(4, 200);
     playSound('boss_hit');
     if (boss.health <= 0) {
         killUnicorn(boss);
-
+    } else {
+        boss.phase = 'recover'; boss.phaseTimer = 1800; boss.moveElapsed = 0;
+        boss.teleportTarget = null;
+        // Open an escape around a stunned boss so a single blocked cell cannot
+        // repeatedly drain its health. The surrounding trap remains in place.
+        for (let x = Math.max(0, boss.x - 1); x <= Math.min(COLS - 1, boss.x + 1); x++) {
+            for (let y = Math.max(0, boss.y - 1); y <= Math.min(ROWS - 1, boss.y + 1); y++) {
+                occupiedGrid[x][y] = null; trailTimeGrid[x][y] = 0;
+            }
+        }
+        for (const u of unicorns) u.trail = u.trail.filter(seg => Math.abs(seg.x - boss.x) > 1 || Math.abs(seg.y - boss.y) > 1);
+        recoverDirection(boss);
     }
+    if (typeof fantasyEvent === 'function') fantasyEvent('boss', boss.x, boss.y, boss.alive ? 'Stunned! Splat nearby' : 'Boss defeated!', '#ffc4e6');
+    return true;
+}
+
+function safePhantomLanding(x, y) {
+    if (x < 3 || y < 3 || x >= COLS - 3 || y >= ROWS - 3) return false;
+    if (Math.abs(x - player.x) + Math.abs(y - player.y) < 7) return false;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        if (occupiedGrid[x + dx][y + dy] !== null || unicorns.some(u => u.alive && !u.isBoss && Math.abs(u.x - x - dx) + Math.abs(u.y - y - dy) <= 1)) return false;
+    }
+    return true;
+}
+function updateBoss(delta) {
+    if (!boss?.alive || !player?.alive) return;
+    boss.enraged = boss.maxHealth > 2 && boss.health <= boss.maxHealth / 2;
+    boss.phaseTimer -= delta;
+    if (boss.phaseTimer > 0) return;
+    if (boss.phase === 'patrol') {
+        const dx = player.x - boss.x, dy = player.y - boss.y;
+        boss.attackDir = Math.abs(dx) >= Math.abs(dy) ? dx >= 0 ? 'right' : 'left' : dy >= 0 ? 'down' : 'up';
+        if (boss.bossType.id === 'phantom') {
+            boss.teleportTarget = null;
+            for (let attempt = 0; attempt < 80; attempt++) {
+                const x = randomInt(Math.max(3, player.x - 12), Math.min(COLS - 4, player.x + 12));
+                const y = randomInt(Math.max(3, player.y - 12), Math.min(ROWS - 4, player.y + 12));
+                if (safePhantomLanding(x, y)) { boss.teleportTarget = { x, y }; break; }
+            }
+            if (!boss.teleportTarget) { boss.phaseTimer = 1200; return; }
+        }
+        boss.phase = 'telegraph'; boss.phaseTimer = 1200; boss.moveElapsed = 0;
+        playSound('countdown');
+    } else if (boss.phase === 'telegraph') {
+        if (boss.bossType.id === 'phantom') {
+            const target = boss.teleportTarget;
+            // Recheck at commit: the player may have reached the warning ring.
+            if (target && safePhantomLanding(target.x, target.y)) {
+                if (typeof fantasyEvent === 'function') fantasyEvent('warp', boss.x, boss.y, '', '#d3b5ff');
+                boss.x = boss.previousX = target.x; boss.y = boss.previousY = target.y;
+                boss.lastMoveTime = gameTime; boss.moveElapsed = 0;
+                if (typeof fantasyEvent === 'function') fantasyEvent('warp', boss.x, boss.y, 'Phantom', '#d3b5ff');
+            }
+            boss.teleportTarget = null; boss.phase = 'recover'; boss.phaseTimer = 1800;
+        } else {
+            boss.phase = 'attack'; boss.phaseTimer = 950;
+            boss.dir = boss.nextDir = boss.attackDir;
+        }
+    } else if (boss.phase === 'attack') {
+        boss.phase = 'recover'; boss.phaseTimer = 1800;
+    } else {
+        boss.phase = 'patrol'; boss.phaseTimer = boss.enraged ? 2200 : 3600;
+    }
+}
+
+function bossHint() {
+    if (!boss?.alive) return '';
+    if (boss.phase === 'telegraph') return boss.bossType.id === 'charger' ? 'Charge incoming · Leave the marked lane!' : 'Warp incoming · Avoid the violet ring!';
+    if (boss.phase === 'attack') return 'Bait the charge into solid poop';
+    if (boss.phase === 'recover') return 'Opening! Splat close behind you to hit';
+    return boss.bossType.id === 'charger' ? 'Trap its charge with solid poop · Splat hits nearby' : 'Watch its warp ring · Trap it or Splat nearby';
 }
 
 function drawBossHealthBar() {
@@ -1620,52 +1774,10 @@ function drawBossHealthBar() {
 }
 
 function chooseBossDirection() {
-    if (!boss || !boss.alive || !player || !player.alive) return chooseNPCDirection(boss);
-    const bt = boss.bossType;
-
-    if (bt.id === 'phantom' && Math.random() < 0.03) {
-        // Teleport: move to a random open cell
-        for (let attempt = 0; attempt < 30; attempt++) {
-            const nx = randomInt(3, COLS - 4), ny = randomInt(3, ROWS - 4);
-            if (occupiedGrid[nx][ny] === null) {
-                boss.x = nx; boss.y = ny;
-                playSound('powerup');
-                // Teleport particles
-                for (let j = 0; j < 10; j++) {
-                    const a = (Math.PI * 2 * j) / 10;
-                    collectParticles.push({ x: nx * GRID_SIZE + 8, y: ny * GRID_SIZE + 8,
-                        vx: Math.cos(a) * 3, vy: Math.sin(a) * 3, life: 1, color: '#B388FF', size: 4 });
-                }
-                break;
-            }
-        }
-    }
-
-    // Charger: lean toward player more aggressively
-    const possible = getPossibleDirections(boss.dir);
-    let best = []; let bestScore = -Infinity;
-    const bossNow = gameTime;
-    for (const dir of possible) {
-        const { dx, dy } = dirToDelta(dir);
-        const nx = boss.x + dx, ny = boss.y + dy;
-        const bOccupied = !isOutOfBounds(nx, ny) && occupiedGrid[nx][ny] !== null;
-        const bFresh = bOccupied && trailTimeGrid[nx] && trailTimeGrid[nx][ny] > 0 && (bossNow - trailTimeGrid[nx][ny]) < FRESH_POOP_DURATION;
-        if (isOutOfBounds(nx, ny) || (bOccupied && !bFresh)) {
-            if (-1 > bestScore) { bestScore = -1; best = [dir]; }
-            else if (-1 === bestScore) best.push(dir);
-            continue;
-        }
-        let sc = scoreDirection(boss.x, boss.y, dir, waveLookahead);
-        // Aggressive: bonus for moving toward player
-        if (bt.id === 'charger' && player.alive) {
-            const distBefore = Math.abs(boss.x - player.x) + Math.abs(boss.y - player.y);
-            const distAfter = Math.abs(nx - player.x) + Math.abs(ny - player.y);
-            if (distAfter < distBefore) sc += 3;
-        }
-        if (sc > bestScore) { bestScore = sc; best = [dir]; }
-        else if (sc === bestScore) best.push(dir);
-    }
-    return best[Math.floor(Math.random() * best.length)];
+    if (!boss || !boss.alive) return 'left';
+    if (boss.phase === 'attack') return boss.attackDir;
+    if (boss.phase === 'recover') return chooseNPCDirection({ ...boss, personality: NPC_PERSONALITIES[2] });
+    return chooseNPCDirection(boss);
 }
 
 // ---- SCREEN SHAKE ----
@@ -1756,7 +1868,7 @@ function scoreDirection(x, y, dir, depth) {
         if (occupiedGrid[nx][ny] !== null) {
             // Fresh poop is passable
             const cellTime = trailTimeGrid[nx] ? trailTimeGrid[nx][ny] : 0;
-            if (cellTime > 0 && (now - cellTime) < FRESH_POOP_DURATION) {
+            if (cellTime > 0 && (now + (i - 1) * waveMoveInterval * arenaMoveScale - cellTime) < FRESH_POOP_DURATION) {
                 score++;
                 continue;
             }
@@ -1783,7 +1895,8 @@ function chooseNPCDirection(npc) {
         const ny = npc.y + dy;
         const cellOccupied = !isOutOfBounds(nx, ny) && occupiedGrid[nx][ny] !== null;
         const cellFresh = cellOccupied && trailTimeGrid[nx] && trailTimeGrid[nx][ny] > 0 && (now - trailTimeGrid[nx][ny]) < FRESH_POOP_DURATION;
-        if (isOutOfBounds(nx, ny) || (cellOccupied && !cellFresh)) {
+        const headDanger = unicorns.some(other => other !== npc && other.alive && other.x === nx && other.y === ny);
+        if (isOutOfBounds(nx, ny) || (cellOccupied && !cellFresh) || headDanger) {
             if (-1 > bestScore) { bestScore = -1; best = [dir]; }
             else if (-1 === bestScore) best.push(dir);
             continue;
@@ -1810,6 +1923,7 @@ function chooseNPCDirection(npc) {
             const nx = npc.x + dx;
             const ny = npc.y + dy;
             if (isOutOfBounds(nx, ny)) return false;
+            if (unicorns.some(other => other !== npc && other.alive && other.x === nx && other.y === ny)) return false;
             if (occupiedGrid[nx][ny] === null) return true;
             // Fresh poop counts as safe
             const ct = trailTimeGrid[nx] ? trailTimeGrid[nx][ny] : 0;
@@ -1829,6 +1943,13 @@ function killUnicorn(unicorn, reason = 'Hardened trail', crashX = unicorn.x, cra
         return;
     }
     if (unicorn.isPlayer && gameTime < unicorn.invulnerableUntil) return;
+    if (unicorn.isPlayer && heartLives > 0) {
+        heartLives--;
+        heartRescueUntil = unicorn.invulnerableUntil = gameTime + HEART_RESCUE_DURATION;
+        playSound('powerup');
+        if (typeof fantasyEvent === 'function') fantasyEvent('heart', unicorn.x, unicorn.y, '♥ Saved!', '#ffb8d7');
+        return;
+    }
     if (unicorn.isPlayer && getAccessoryBuff().bonusLife && (currentWave + 1) % 10 === 0 && !haloLifeUsed) {
         haloLifeUsed = true;
         unicorn.invulnerableUntil = gameTime + 600;
@@ -1837,7 +1958,7 @@ function killUnicorn(unicorn, reason = 'Hardened trail', crashX = unicorn.x, cra
     }
 
     // Boss takes damage instead of dying instantly
-    if (unicorn.isBoss && unicorn.health > 1) {
+    if (unicorn.isBoss && unicorn.health > 0) {
         damageBoss(1);
         return;
     }
@@ -1916,7 +2037,10 @@ function killUnicorn(unicorn, reason = 'Hardened trail', crashX = unicorn.x, cra
 }
 
 function movementInterval(u) {
-    if (!u.isPlayer) return waveMoveInterval * arenaMoveScale * (u.isBoss ? u.bossType.speed : 1);
+    if (!u.isPlayer) {
+        const phaseSpeed = u.isBoss && u.phase === 'attack' ? .6 : u.isBoss && u.phase === 'recover' ? 1.35 : 1;
+        return waveMoveInterval * arenaMoveScale * phaseSpeed;
+    }
     const accessory = getAccessoryBuff(), dog = getDogBuff();
     let interval = waveMoveInterval * arenaMoveScale * (1 + (accessory.speedResist || 0)) * (1 - (accessory.speedBonus || 0) - (dog.speedBonus || 0));
     if (activePowerup && activePowerup.type.id === 'speed') interval *= 0.6;
@@ -1986,6 +2110,9 @@ function moveAllUnicorns(movers = unicorns.filter(u => u.alive)) {
         if (!u.alive) continue;
         if (m.blocked) { recoverDirection(u); continue; }
         if (isOutOfBounds(m.newX, m.newY)) {
+            // Ordinary patrols turn at the edge. A committed charge into it
+            // is a punishable mistake, including when the player baits it.
+            if (u.isBoss && u.phase !== 'attack') { recoverDirection(u); continue; }
             killUnicorn(u, 'The arena wall', m.newX, m.newY);
             if (u.alive) recoverDirection(u);
             continue;
@@ -3297,9 +3424,9 @@ function drawHUD() {
 function drawTouchControls() {
     if (gameState !== PLAYING) return;
 
-    const controlScale = CANVAS_WIDTH / window.innerWidth;
+    const controlScale = VIEW_WIDTH / window.innerWidth;
     dpadCenterX = 104 * controlScale;
-    dpadCenterY = CANVAS_HEIGHT - 104 * (CANVAS_HEIGHT / window.innerHeight);
+    dpadCenterY = VIEW_HEIGHT - 104 * (VIEW_HEIGHT / window.innerHeight);
     const r = dpadRadius = DPAD_RADIUS * controlScale;
     const btnR = DPAD_BTN_SIZE / 2 * controlScale;
 
@@ -3897,7 +4024,7 @@ function drawWinScreen() {
 
     ctx.font = '20px sans-serif';
     ctx.fillStyle = '#6BCB77';
-    const nextW = WAVES[Math.min(currentWave, WAVES.length - 1)];
+    const nextW = waveConfig(currentWave);
     ctx.fillText(`Next: Wave ${currentWave + 1} \u2014 ${nextW.npcCount} unicorns, faster!`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 75);
 
     ctx.font = 'bold 24px sans-serif';
@@ -4139,6 +4266,7 @@ function triggerSplatter() {
     const oppDir = OPPOSITES[player.dir];
     const { dx, dy } = dirToDelta(oppDir);
     const cx = player.x + dx * 2, cy = player.y + dy * 2;
+    if (boss?.alive && (boss.x - cx) ** 2 + (boss.y - cy) ** 2 <= (SPLATTER_RADIUS + 1) ** 2) damageBoss(1);
     for (let ox = -SPLATTER_RADIUS; ox <= SPLATTER_RADIUS; ox++) {
         for (let oy = -SPLATTER_RADIUS; oy <= SPLATTER_RADIUS; oy++) {
             if (ox*ox + oy*oy > SPLATTER_RADIUS * SPLATTER_RADIUS + 1) continue;
@@ -4249,6 +4377,7 @@ function simulateGameStep(delta) {
     gameTime += delta;
     survivalTimer += delta;
     score += SCORE_PER_SECOND * scoreMultiplier * (1 + getCompanionScoreBonus()) * delta / 1000;
+    if (survivalGoal() && survivalTimer >= survivalGoal()) { finishRound(true); return; }
     multiplierTimer += delta;
     if (multiplierTimer >= MULTIPLIER_GROWTH_INTERVAL) {
         multiplierTimer -= MULTIPLIER_GROWTH_INTERVAL;
@@ -4263,9 +4392,11 @@ function simulateGameStep(delta) {
     if (burstActive) { burstTimer -= delta; if (burstTimer <= 0) burstActive = false; }
     if (trailWidenerActive) { trailWidenerTimer -= delta; if (trailWidenerTimer <= 0) trailWidenerActive = false; }
     updatePowerup(delta);
+    updateBoss(delta);
     const movers = [];
     for (const u of unicorns) {
         if (!u.alive) continue;
+        if (u.isBoss && u.phase === 'telegraph') continue;
         u.trotPhase += TROT_SPEED * delta * (u.isPlayer && burstActive ? 1.45 : 1);
         u.moveElapsed += delta;
         const interval = movementInterval(u);
@@ -4323,65 +4454,35 @@ function gameLoop(timestamp) {
         case COUNTDOWN:
             for (const u of unicorns) u.trotPhase += TROT_SPEED * clampedDelta;
             updateCountdown(clampedDelta);
-            drawCountdownScreen();
+            updateCamera(clampedDelta);
+            drawArenaWorld(); drawHUD();
             break;
         case PLAYING:
             updateGame(clampedDelta);
-            ctx.save();
-            applyShake();
-            drawBackground();
-            drawTrails();
-            drawCollectibles();
-            drawPowerups();
-            drawAllUnicorns();
-            drawParticles(deathParticles);
-            drawParticles(collectParticles);
-            if (typeof drawFantasyEffects === 'function') drawFantasyEffects();
-            ctx.restore();
-            drawHUD();
-            drawActivePowerup();
-            drawBossHealthBar();
+            updateCamera(clampedDelta);
+            drawArenaWorld(true);
+            drawHUD(); drawActivePowerup(); drawBossHealthBar();
             if (typeof syncGameUI !== 'function') drawTutorialHint();
-            drawAchievementPopup(0);
-            drawUnlockPopup();
-            // Ghost mode visual indicator
-            if (activePowerup && activePowerup.type.id === 'ghost' && player && player.alive) {
-                ctx.globalAlpha = 0.15 + 0.1 * Math.sin(performance.now() * 0.01);
-                ctx.fillStyle = '#E0E0FF';
-                ctx.strokeStyle = '#E0E0FF'; ctx.lineWidth = 6; ctx.strokeRect(4, 4, CANVAS_WIDTH - 8, CANVAS_HEIGHT - 8);
-                ctx.globalAlpha = 1;
+            drawAchievementPopup(0); drawUnlockPopup();
+            if (activePowerup?.type.id === 'ghost' || gameTime < heartRescueUntil) {
+                ctx.save(); ctx.strokeStyle = gameTime < heartRescueUntil ? '#ffb8d7' : '#E0E0FF';
+                ctx.globalAlpha = reducedMotion ? .4 : .3 + .12 * Math.sin(gameTime * .01);
+                ctx.lineWidth = 6; ctx.strokeRect(4, 4, VIEW_WIDTH - 8, VIEW_HEIGHT - 8); ctx.restore();
             }
             break;
         case PAUSED:
-            drawBackground();
-            drawTrails();
-            drawCollectibles();
-            drawPowerups();
-            drawAllUnicorns();
-            drawParticles(deathParticles);
-            drawParticles(collectParticles);
-            if (typeof drawFantasyEffects === 'function') drawFantasyEffects();
-            drawHUD();
+            drawArenaWorld(); drawHUD();
             if (typeof syncGameUI !== 'function') drawPauseOverlay();
             break;
         case GAME_OVER:
             updateParticles(clampedDelta);
-            drawBackground();
-            drawTrails();
-            drawAllUnicorns();
-            drawParticles(deathParticles);
-            if (typeof drawFantasyEffects === 'function') drawFantasyEffects();
-            drawHUD();
+            drawArenaWorld(); drawHUD();
             if (typeof syncGameUI !== 'function') drawGameOverScreen();
             break;
         case WIN:
             updateParticles(clampedDelta);
-            drawBackground();
-            drawTrails();
-            drawAllUnicorns();
-            drawHUD();
+            drawArenaWorld(); drawHUD();
             if (typeof syncGameUI !== 'function') drawWinScreen();
-            if (typeof drawFantasyEffects === 'function') { drawParticles(winParticles); drawFantasyEffects(); }
             break;
         case RUN_SUMMARY:
             if (typeof syncGameUI !== 'function') drawRunSummaryScreen(clampedDelta);

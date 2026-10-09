@@ -1,34 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const path = require('node:path');
-const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-const renderer = fs.readFileSync(path.join(__dirname, '..', 'render.js'), 'utf8');
-
-// Run the real engine in isolation; browser drawing/audio are the only mocked surfaces.
-function engine({ width = 1280, height = 720, touch = false, render = false, dpr = 1 } = {}) {
-    const clock = { now: 10000 }, saved = {};
-    const canvasEvents = {}, drawCalls = [];
-    const gradient = { addColorStop() {} };
-    const ctx = new Proxy({}, { get: (target, key) => target[key] || (key.startsWith('create') ? () => gradient : () => {}), set: (target, key, value) => (target[key] = value, true) });
-    ctx.drawImage = (...args) => drawCalls.push(args);
-    const canvas = { style: {}, addEventListener: (name, handler) => canvasEvents[name] = handler, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0, width, height }) };
-    const context = vm.createContext({
-        console, Math, JSON, performance: { now: () => clock.now },
-        window: { innerWidth: width, innerHeight: height, devicePixelRatio: dpr, addEventListener() {} }, navigator: { maxTouchPoints: touch ? 5 : 0 },
-        document: { createElement: () => ({ getContext: () => ctx }), getElementById: id => id === 'gameCanvas' ? canvas : { style: {} }, documentElement: { clientWidth: width, clientHeight: height }, body: { classList: { add() {}, remove() {} } }, addEventListener() {} },
-        localStorage: { getItem: key => saved[key] || null, setItem: (key, value) => saved[key] = value },
-        Image: class { constructor() { this.complete = true; this.naturalWidth = this.width = 120; this.naturalHeight = this.height = 110; } },
-        requestAnimationFrame() {}, setTimeout() {},
-    });
-    vm.runInContext(source, context);
-    if (render) vm.runInContext(renderer, context);
-    const run = code => vm.runInContext(code, context);
-    run('soundEnabled = false; startCountdown(); gameState = PLAYING; collectibles = []; powerups = [];');
-    return { run, clock, saved, canvas, canvasEvents, drawCalls };
-}
-function advance(e, ms, frame = 20) { for (let t = 0; t < ms; t += frame) e.run(`updateGame(${Math.min(frame, ms - t)});`); }
+const { engine, advance } = require('./harness.cjs');
 
 for (const fps of [30, 60, 120, 144]) test(`equal survival scoring at ${fps} FPS`, () => {
     const e = engine();
@@ -112,6 +84,10 @@ test('Score Attack completes at 60 seconds and records exactly one round', () =>
     assert.equal(e.run('gameState'), 'WIN'); assert.equal(e.run('scoreAttackTimer'), 60000); assert.equal(e.run('roundsPlayed'), 1);
     e.run('recordRound(true);'); assert.equal(e.run('roundsPlayed'), 1);
 });
+test('Score Attack uses returning rivals even when starting from an unlocked boss wave', () => {
+    const e=engine(); e.run("selectedGameMode='scoreattack'; currentWave=4; startCountdown();");
+    assert.equal(e.run('isBossWave'),false); assert.equal(e.run('boss'),null); assert.equal(e.run('survivalGoal()'),0);
+});
 test('practice is nonlethal and never awards match progression', () => {
     const e = engine(); e.run('startPractice(); gameState = PLAYING; player.x = COLS - 1; moveAllUnicorns([player]); recordRound(true);');
     assert.equal(e.run('player.alive'), true); assert.equal(e.run('roundsPlayed'), 0); assert.equal(e.run('rainbowPoints'), 0); assert.equal(e.run('unlockedAchievements.length'), 0);
@@ -127,12 +103,14 @@ test('draw path handles player, rivals, trails, and the equipped dog', () => {
     const e = engine(); advance(e, 120); e.run('drawBackground(); drawTrails(); drawCollectibles(); drawAllUnicorns(); drawHUD();');
     assert.equal(e.run('companionVisuals.length'), 1);
 });
-for (const [width, height] of [[390, 844], [844, 390]]) test(`phone arena fills ${width}×${height} with twenty cells on its short side`, () => {
+for (const [width, height] of [[390, 844], [844, 390]]) test(`phone arena fills ${width}×${height} with a larger world and 24 visible cells on its short side`, () => {
     const e = engine({ width, height, touch: true, dpr: 3 });
     assert.equal(e.canvas.style.width, `${width}px`); assert.equal(e.canvas.style.height, `${height}px`);
     assert.equal(e.canvas.width, width * 2); assert.equal(e.canvas.height, height * 2);
-    assert.equal(e.run('Math.min(COLS, ROWS)'), 20);
-    assert.ok(Math.abs(e.run('CANVAS_WIDTH / CANVAS_HEIGHT') - width / height) < .02);
+    assert.equal(e.run('Math.min(COLS, ROWS)'), 44);
+    assert.equal(e.run('Math.min(VIEW_WIDTH, VIEW_HEIGHT) / GRID_SIZE'), 24);
+    assert.ok(e.run('CANVAS_WIDTH > VIEW_WIDTH && CANVAS_HEIGHT > VIEW_HEIGHT'));
+    assert.ok(Math.abs(e.run('VIEW_WIDTH / VIEW_HEIGHT') - width / height) < .02);
     assert.equal(e.run('movementInterval(player)'), 220);
 });
 test('rotation preserves hazards, trail ages, interpolation, queued turns, and rewards', () => {
@@ -140,9 +118,9 @@ test('rotation preserves hazards, trail ages, interpolation, queued turns, and r
     e.run("addTrailCell(player, 7, 8, true); turnQueue = ['down', 'left']; playerPosHistory = [{px: 100, py: 200, dir: 'right'}]; companionVisuals = [{x: 90, y: 180, dir: 'right'}]; fantasyEvent('collect', 9, 10, '+50', '#fff');");
     const before = e.run('JSON.stringify({cols:COLS,rows:ROWS,player,occupiedGrid,trailTimeGrid,turnQueue,playerPosHistory,companionVisuals,fantasyEffects,roundsPlayed,gameTime})');
     e.run('window.innerWidth = 390; window.innerHeight = 844; resizeCanvas();');
-    assert.equal(e.run('gameState'), 'PAUSED'); assert.equal(e.run('COLS'), 20);
-    assert.equal(e.run('occupiedGrid[11][7]'), 'player');
-    assert.equal(e.run('trailTimeGrid[11][7]'), -900);
+    assert.equal(e.run('gameState'), 'PAUSED'); assert.equal(e.run('COLS'), 44);
+    assert.equal(e.run('occupiedGrid[35][7]'), 'player');
+    assert.equal(e.run('trailTimeGrid[35][7]'), -900);
     assert.equal(e.run('turnQueue.join()'), 'left,up');
     e.run('window.innerWidth = 844; window.innerHeight = 390; resizeCanvas();');
     assert.equal(e.run('JSON.stringify({cols:COLS,rows:ROWS,player,occupiedGrid,trailTimeGrid,turnQueue,playerPosHistory,companionVisuals,fantasyEffects,roundsPlayed,gameTime})'), before);
@@ -160,8 +138,8 @@ test('a swipe turns on touchmove exactly once, without waiting for the finger to
 test('optional D-pad stays finger sized on a portrait phone', () => {
     const e = engine({ width: 390, height: 844, touch: true });
     e.run('showDpad = true; drawTouchControls();');
-    assert.equal(e.run('dpadCenterX * window.innerWidth / CANVAS_WIDTH'), 104);
-    assert.equal(e.run('dpadRadius * window.innerWidth / CANVAS_WIDTH'), 60);
+    assert.equal(e.run('dpadCenterX * window.innerWidth / VIEW_WIDTH'), 104);
+    assert.equal(e.run('dpadRadius * window.innerWidth / VIEW_WIDTH'), 60);
     assert.equal(e.run("handleTouchDirection(dpadCenterX, dpadCenterY + dpadRadius * .7); turnQueue.join()"), 'down');
 });
 test('fantasy renderer uses eight different gallop frames and an idle pose with reduced motion', () => {
@@ -188,4 +166,122 @@ test('a cold start waits for artwork and recovers with a visible fallback after 
     assert.equal(e.run('countdownTimer'), 0); assert.equal(e.run('gameState'), 'COUNTDOWN');
     e.run('updateCountdown(7000);'); assert.equal(e.run('gameState'), 'PLAYING');
     e.run("imgCache.classic.complete = true; imgCache.classic.naturalWidth = 0; drawSpriteUnicorn('classic', 'none', 100, 100, 'right', 72, 0);");
+});
+
+test('a heart banks a spare life, crosses a solid wall, then expires without spending another life', () => {
+    const e = engine();
+    e.run("collectibles = [{x: player.x, y: player.y, type: COLLECTIBLE_TYPES[2]}]; checkCollectiblePickup(); addTrailCell(unicorns[1], player.x + 1, player.y, true); let wallX = player.x + 1; moveAllUnicorns([player]);");
+    assert.equal(e.run('heartLives'), 0); assert.equal(e.run('player.x'), e.run('wallX')); assert.equal(e.run('player.alive'), true);
+    e.run('addTrailCell(unicorns[1], player.x + 1, player.y, true); moveAllUnicorns([player]);'); assert.equal(e.run('player.alive'), true);
+    e.run('gameTime = heartRescueUntil; addTrailCell(unicorns[1], player.x + 1, player.y, true); moveAllUnicorns([player]);'); assert.equal(e.run('player.alive'), false);
+});
+test('heart lives cap at three, stack separately from Ghost, freeze on pause, and reset each round', () => {
+    const e = engine();
+    e.run('for (let i=0; i<5; i++) { collectibles = [{x:player.x,y:player.y,type:COLLECTIBLE_TYPES[2]}]; checkCollectiblePickup(); } activePowerup = {type:POWERUP_TYPES[1],remaining:3000}; addTrailCell(unicorns[1],player.x+1,player.y,true); moveAllUnicorns([player]);');
+    assert.equal(e.run('heartLives'), 3);
+    e.run('activePowerup=null; killUnicorn(player); togglePause();'); const remaining=e.run('heartRescueUntil-gameTime');
+    advance(e, 5000); assert.equal(e.run('heartRescueUntil-gameTime'), remaining);
+    e.run('startCountdown();'); assert.equal(e.run('heartLives'), 0); assert.equal(e.run('heartRescueUntil'), 0);
+});
+test('heart also rescues a boundary crash and turns toward a valid escape', () => {
+    const e = engine(); e.run('heartLives=1; player.x=COLS-1; moveAllUnicorns([player]);');
+    assert.equal(e.run('player.alive'), true); assert.equal(e.run('heartLives'), 0); assert.notEqual(e.run('player.nextDir'), 'right');
+});
+test('early waves give the player three seconds without a scripted head-on crash', () => {
+    for (const [width,height] of [[390,844],[844,390],[1280,720]]) {
+        const e=engine({width,height}); advance(e,3000);
+        assert.equal(e.run('player.alive'),true);
+    }
+});
+test('survival clears a regular wave at its deadline once, while boss waves still require a defeat', () => {
+    const e=engine(); e.run('moveAllUnicorns=()=>{};'); advance(e,35000,100);
+    assert.equal(e.run('gameState'),'WIN'); assert.equal(e.run('survivalTimer'),35000); assert.equal(e.run('roundsPlayed'),1);
+    e.run('recordRound(true);'); assert.equal(e.run('roundsPlayed'),1);
+    e.run("selectedGameMode='bossrush'; startCountdown(); gameState=PLAYING; updateBoss=()=>{};"); advance(e,60000,100);
+    assert.equal(e.run('gameState'),'PLAYING'); assert.equal(e.run('boss.alive'),true);
+});
+test('AI forecasts trail hardening and avoids a stationary unicorn head', () => {
+    const e=engine();
+    e.run("let npc=unicorns[1]; npc.x=20; npc.y=20; npc.dir='right'; npc.personality=NPC_PERSONALITIES[0]; waveMistakeChance=0; gameTime=800; addTrailCell(player,22,20); trailTimeGrid[22][20]=1;");
+    assert.equal(e.run("scoreDirection(20,20,'right',4)"),1);
+    e.run('player.x=21; player.y=20;'); assert.notEqual(e.run('chooseNPCDirection(npc)'), 'right');
+});
+test('wave progression varies in chapters while keeping speed, AI, and crowd sizes bounded', () => {
+    const e=engine();
+    assert.equal(e.run('waveConfig(0).npcCount'),e.run('waveConfig(1).npcCount'));
+    assert.ok(e.run('waveConfig(5).moveInterval > waveConfig(3).moveInterval'));
+    for (let i=0;i<1000;i++) {
+        const w=e.run(`waveConfig(${i})`);
+        assert.ok(w.moveInterval>=86 && w.moveInterval<=110); assert.ok(w.npcCount>=2 && w.npcCount<=6); assert.ok(w.lookahead<=8); assert.ok(w.mistakeChance>=.018);
+    }
+});
+test('the following camera stays inside the world, follows bursts, and freezes on pause', () => {
+    const e=engine({width:390,height:844,touch:true});
+    e.run('player.x=COLS-5; player.y=ROWS-5; player.previousX=player.x; player.previousY=player.y; updateCamera(1000);');
+    assert.ok(e.run('camera.x >= 0 && camera.x + VIEW_WIDTH <= CANVAS_WIDTH && camera.y >= 0 && camera.y + VIEW_HEIGHT <= CANVAS_HEIGHT'));
+    assert.ok(e.run('visualPosition(player).x-camera.x >= 0 && visualPosition(player).x-camera.x <= VIEW_WIDTH'));
+    const position=e.run('JSON.stringify(camera)'); e.run('togglePause(); updateCamera(1000);'); assert.equal(e.run('JSON.stringify(camera)'),position);
+    e.run('togglePause(); player.x=0; player.y=0; player.previousX=0; player.previousY=0; updateCamera(1000);');
+    assert.equal(e.run('camera.x'),0); assert.equal(e.run('camera.y'),0);
+});
+test('camera smoothing is independent of refresh rate with a stationary target', () => {
+    const samples=[];
+    for (const fps of [30,60,120,144]) {
+        const e=engine(); e.run('player.x=35; player.y=25; player.previousX=35; player.previousY=25; resetCamera(); camera.x-=100;');
+        for(let i=0;i<fps;i++) e.run(`updateCamera(${1000/fps});`);
+        samples.push(e.run('camera.x'));
+    }
+    assert.ok(Math.max(...samples)-Math.min(...samples)<.1);
+});
+test('boss rush alternates encounters, caps health, and classic starts with the Charger', () => {
+    const e=engine(); const ids=[];
+    for(let i=0;i<6;i++){e.run(`selectedGameMode='bossrush'; currentWave=${i}; startCountdown();`);ids.push(e.run('boss.bossType.id'));}
+    assert.equal(ids.join(','),'charger,phantom,charger,phantom,charger,phantom');
+    e.run("currentWave=999; startCountdown();"); assert.equal(e.run('boss.maxHealth'),6);
+    e.run("selectedGameMode='classic'; currentWave=4; startCountdown();"); assert.equal(e.run('boss.bossType.id'),'charger'); assert.equal(e.run('boss.maxHealth'),2);
+});
+test('Charger gives a full warning, commits a direction, then offers a recovery window', () => {
+    const e=engine(); e.run("selectedGameMode='bossrush'; startCountdown(); gameState=PLAYING; updateBoss(3800);");
+    assert.equal(e.run('boss.phase'),'telegraph'); const dir=e.run('boss.attackDir');
+    e.run('updateBoss(1190);'); assert.equal(e.run('boss.phase'),'telegraph');
+    e.run('updateBoss(10); player.x=0; player.y=0;'); assert.equal(e.run('boss.phase'),'attack'); assert.equal(e.run('chooseBossDirection()'),dir);
+    e.run('updateBoss(950);'); assert.equal(e.run('boss.phase'),'recover'); assert.equal(e.run('boss.phaseTimer'),1800);
+});
+test('Phantom warns, lands away from heads and trails, and resets interpolation', () => {
+    const e=engine(); e.run("selectedGameMode='bossrush'; currentWave=1; startCountdown(); gameState=PLAYING; updateBoss(3800);");
+    assert.equal(e.run('boss.phase'),'telegraph'); assert.ok(e.run('safePhantomLanding(boss.teleportTarget.x,boss.teleportTarget.y)'));
+    const target=e.run('JSON.stringify(boss.teleportTarget)'); e.run('updateBoss(1200);');
+    assert.equal(e.run('JSON.stringify({x:boss.x,y:boss.y})'),target); assert.equal(e.run('boss.previousX'),e.run('boss.x')); assert.equal(e.run('boss.previousY'),e.run('boss.y'));
+});
+test('Phantom cancels a warp when its warned landing becomes unsafe', () => {
+    const e=engine(); e.run("selectedGameMode='bossrush'; currentWave=1; startCountdown(); gameState=PLAYING; updateBoss(3800); let oldBossX=boss.x; let oldBossY=boss.y; player.x=boss.teleportTarget.x; player.y=boss.teleportTarget.y; updateBoss(1200);");
+    assert.equal(e.run('boss.x'),e.run('oldBossX')); assert.equal(e.run('boss.y'),e.run('oldBossY')); assert.equal(e.run('boss.teleportTarget'),null);
+});
+test('boss collision damage cannot drain health repeatedly in a blocked cell', () => {
+    const e=engine(); e.run("selectedGameMode='bossrush'; currentWave=5; startCountdown(); gameState=PLAYING; let initialHealth=boss.health; killUnicorn(boss); killUnicorn(boss); killUnicorn(boss);");
+    assert.equal(e.run('boss.health'),e.run('initialHealth-1')); assert.equal(e.run('boss.phase'),'recover');
+    e.run('gameTime+=900; damageBoss(1);'); assert.equal(e.run('boss.health'),e.run('initialHealth-2'));
+});
+test('a boss patrol turns at the arena edge while a committed charge takes damage', () => {
+    const e=engine(); e.run("selectedGameMode='bossrush'; startCountdown(); gameState=PLAYING; boss.x=COLS-1; boss.dir=boss.nextDir='right'; chooseBossDirection=()=> 'right'; let healthBefore=boss.health; moveAllUnicorns([boss]);");
+    assert.equal(e.run('boss.health'),e.run('healthBefore')); assert.notEqual(e.run('boss.nextDir'),'right');
+    e.run("boss.phase='attack'; moveAllUnicorns([boss]);"); assert.equal(e.run('boss.health'),e.run('healthBefore-1'));
+});
+test('rotation preserves a boss warning and landing target through a round trip', () => {
+    const e=engine({width:844,height:390,touch:true}); e.run("selectedGameMode='bossrush'; currentWave=1; startCountdown(); gameState=PLAYING; updateBoss(3800);");
+    const before=e.run('JSON.stringify({boss,gameTime,heartLives,heartRescueUntil})');
+    e.run('window.innerWidth=390; window.innerHeight=844; resizeCanvas(); window.innerWidth=844; window.innerHeight=390; resizeCanvas();');
+    assert.equal(e.run('JSON.stringify({boss,gameTime,heartLives,heartRescueUntil})'),before);
+});
+test('Splat can damage a nearby boss behind the player without harming a distant boss', () => {
+    const e=engine(); e.run("selectedGameMode='bossrush'; startCountdown(); gameState=PLAYING; let initialHealth=boss.health; triggerSplatter();");
+    assert.equal(e.run('boss.health'),e.run('initialHealth'));
+    e.run("splatterCooldownTimer=0; boss.x=player.x-3; boss.y=player.y; triggerSplatter();"); assert.equal(e.run('boss.health'),e.run('initialHealth-1'));
+});
+test('rendering the camera world, boss warnings, radar and minimap handles both orientations', () => {
+    for(const [width,height] of [[390,844],[844,390]]) {
+        const e=engine({width,height,touch:true,render:true});
+        e.run("selectedGameMode='bossrush'; currentWave=1; startCountdown(); gameState=PLAYING; updateBoss(3800); drawArenaWorld(); drawMinimap(ctx,264,176);");
+        assert.ok(e.drawCalls.length>0);
+    }
 });
