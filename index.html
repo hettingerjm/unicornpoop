@@ -11,15 +11,12 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline';">
     <title>Unicorn Poop</title>
     <link rel="manifest" href="manifest.json">
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="apple-touch-icon" href="assets/fantasy/unicorn-pearl.png">
+    <link rel="preload" href="assets/fantasy/unicorn-pearl.png" as="image">
+    <link rel="preload" href="assets/fantasy/moonlit-lagoon.png" as="image">
+    <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
-    <div id="rotateOverlay">
-        <div class="rotate-icon">📱</div>
-        <div class="rotate-text">Rotate Your Device</div>
-        <div class="rotate-sub">This game plays in landscape mode</div>
-        <div class="rotate-tip">For fullscreen: tap <strong>Share</strong> ↗ then <strong>"Add to Home Screen"</strong></div>
-    </div>
     <div id="gameContainer">
         <canvas id="gameCanvas" width="1280" height="720" aria-label="Unicorn Poop trail arena. Use arrow keys or WASD to steer, Space to burst, X to splat, and Escape to pause."></canvas>
     </div>
@@ -27,7 +24,8 @@
     <div id="liveHUD" hidden></div>
     <div id="arenaOverlay" hidden></div>
     <input id="saveImport" type="file" accept=".json,application/json" hidden aria-label="Choose a Unicorn Poop save file">
-    <script src="game.js?v=5"></script>
-    <script src="ui.js?v=5"></script>
+    <script src="game.js?v=7"></script>
+    <script src="render.js?v=7"></script>
+    <script src="ui.js?v=7"></script>
 </body>
 </html>

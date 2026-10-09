@@ -4,9 +4,9 @@
     "description": "A rainbow trail survival game!",
     "start_url": "./index.html",
     "display": "fullscreen",
-    "orientation": "landscape",
-    "background_color": "#1a1a2e",
-    "theme_color": "#1a1a2e",
+    "orientation": "any",
+    "background_color": "#081925",
+    "theme_color": "#081925",
     "categories": ["games"],
-    "icons": []
+    "icons": [{ "src": "assets/fantasy/unicorn-pearl.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any" }]
 }

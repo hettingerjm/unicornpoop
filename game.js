@@ -4,8 +4,8 @@
 // ============================================
 
 // ---- SETTINGS (tweak these!) ----
-const CANVAS_WIDTH = 1280;
-const CANVAS_HEIGHT = 720;
+let CANVAS_WIDTH = 1280;
+let CANVAS_HEIGHT = 720;
 let GRID_SIZE = 16;                  // pixels per grid cell
 const MOVE_INTERVAL = 100;          // ms between moves (lower = faster)
 const NPC_COUNT = 3;                // number of NPC unicorns
@@ -37,12 +37,12 @@ const WIDENER_DURATION = 4000;
 
 // ---- PNG AVATAR SYSTEM ----
 const UNICORN_AVATARS = [
-    { id: 'classic', label: 'Classic', path: 'assets/unicorns/classic.png' },
-    { id: 'candy',   label: 'Candy',   path: 'assets/unicorns/candy.png' },
-    { id: 'ice',     label: 'Ice',     path: 'assets/unicorns/ice.png' },
-    { id: 'neon',    label: 'Neon',    path: 'assets/unicorns/neon.png' },
-    { id: 'royal',   label: 'Royal',   path: 'assets/unicorns/royal.png' },
-    { id: 'shadow',  label: 'Shadow',  path: 'assets/unicorns/shadow.png' },
+    { id: 'classic', label: 'Pearl', path: 'assets/fantasy/unicorn-pearl.png', filter: 'none' },
+    { id: 'candy',   label: 'Rosé', path: 'assets/fantasy/unicorn-pearl.png', filter: 'hue-rotate(325deg) saturate(1.25)' },
+    { id: 'ice',     label: 'Aurora', path: 'assets/fantasy/unicorn-pearl.png', filter: 'hue-rotate(75deg)' },
+    { id: 'neon',    label: 'Prism', path: 'assets/fantasy/unicorn-pearl.png', filter: 'hue-rotate(165deg) saturate(1.65)' },
+    { id: 'royal',   label: 'Solstice', path: 'assets/fantasy/unicorn-pearl.png', filter: 'hue-rotate(235deg) saturate(1.4)' },
+    { id: 'shadow',  label: 'Eclipse', path: 'assets/fantasy/unicorn-pearl.png', filter: 'brightness(0.63) saturate(1.3) hue-rotate(20deg)' },
 ];
 
 // Accessory anchor types: 'head_top', 'eyes', 'head_float', 'head_wrap', 'back_top', 'back'
@@ -551,6 +551,8 @@ let gameTime = 1;                  // Simulation clock; pauses freeze hazards to
 let simulationAccumulator = 0;
 const SIMULATION_STEP = 10;
 let roundRecorded = false;
+let roundRevealTimer = 0;
+let countdownLoadTimer = 0;
 let haloLifeUsed = false;
 let lastCrash = null;
 let turnQueue = [];
@@ -684,18 +686,32 @@ function getCompanionScoreBonus() {
 
 // ---- MOBILE / TOUCH STATE ----
 const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-let isMobile = isTouchDevice && (window.innerWidth <= 900 || window.innerHeight <= 500);
+let isMobile = isTouchDevice || window.innerWidth <= 900 || window.innerHeight <= 500;
+let arenaMoveScale = 1;
+let arenaAspect = CANVAS_WIDTH / CANVAS_HEIGHT;
 
-// Apply mobile scale
-if (isMobile) {
-    GRID_SIZE = Math.round(16 * MOBILE_SCALE);
-    COLS = Math.floor(CANVAS_WIDTH / GRID_SIZE);
-    ROWS = Math.floor(CANVAS_HEIGHT / GRID_SIZE);
+// Choose a board for the actual screen at the start of each round. A phone gets
+// twenty cells on its short side, rather than a miniature eighty-column board.
+function configureArenaViewport() {
+    const width = Math.max(240, window.innerWidth || 1280);
+    const height = Math.max(240, window.innerHeight || 720);
+    isMobile = isTouchDevice || width <= 900 || height <= 500;
+    GRID_SIZE = isMobile ? 32 : 24;
+    const shortCells = isMobile ? 20 : 30;
+    const aspect = width / height;
+    COLS = Math.max(14, Math.round(aspect >= 1 ? shortCells * aspect : shortCells));
+    ROWS = Math.max(14, Math.round(aspect >= 1 ? shortCells : shortCells / aspect));
+    CANVAS_WIDTH = COLS * GRID_SIZE;
+    CANVAS_HEIGHT = ROWS * GRID_SIZE;
+    arenaAspect = aspect;
+    arenaMoveScale = GRID_SIZE / 16;
+    resizeCanvas();
 }
 
 // D-pad layout (in canvas coordinates, set in drawTouchControls)
 const DPAD_RADIUS = 60;
 const DPAD_BTN_SIZE = 44;
+let dpadRadius = DPAD_RADIUS;
 const DPAD_OPACITY = 0.30;
 const DPAD_ACTIVE_OPACITY = 0.55;
 let dpadCenterX = 0;
@@ -1065,7 +1081,7 @@ function handleTouchDirection(canvasX, canvasY) {
     const dx = canvasX - dpadCenterX;
     const dy = canvasY - dpadCenterY;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < DPAD_RADIUS * 1.8) {
+    if (dist < dpadRadius * 1.8) {
         let dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
         activeTouchDir = dir;
         if (player && player.alive && gameState === PLAYING) {
@@ -1212,56 +1228,65 @@ canvas.addEventListener('click', (e) => {
 });
 
 // ---- RESPONSIVE SCALING ----
-// Internal resolution stays 1280x720 always.
-// Display size scales to fit screen, maintaining 16:9 aspect ratio.
+// Keep the arena edge-to-edge. Rotation transforms the existing board, including
+// its hazards and buffered turns, so a live match can resume without restarting.
 const rotateOverlay = document.getElementById('rotateOverlay');
 
+function rotateArena() {
+    const oldCols = COLS, oldRows = ROWS, oldWidth = CANVAS_WIDTH, oldHeight = CANVAS_HEIGHT;
+    const clockwise = oldCols >= oldRows;
+    const cell = (x, y) => clockwise ? [oldRows - 1 - y, x] : [y, oldCols - 1 - x];
+    const point = (x, y) => clockwise ? [oldHeight - y, x] : [y, oldWidth - x];
+    const directions = clockwise
+        ? { right: 'down', down: 'left', left: 'up', up: 'right' }
+        : { right: 'up', up: 'left', left: 'down', down: 'right' };
+    const rotateGrid = grid => {
+        const rotated = Array.from({ length: oldRows }, () => Array(oldCols));
+        for (let x = 0; x < oldCols; x++) for (let y = 0; y < oldRows; y++) {
+            const [nx, ny] = cell(x, y); rotated[nx][ny] = grid[x][y];
+        }
+        return rotated;
+    };
+    occupiedGrid = rotateGrid(occupiedGrid); trailTimeGrid = rotateGrid(trailTimeGrid);
+    for (const u of unicorns) {
+        [u.x, u.y] = cell(u.x, u.y); [u.previousX, u.previousY] = cell(u.previousX, u.previousY);
+        u.dir = directions[u.dir]; u.nextDir = directions[u.nextDir];
+        for (const seg of u.trail) [seg.x, seg.y] = cell(seg.x, seg.y);
+    }
+    for (const item of [...collectibles, ...powerups]) [item.x, item.y] = cell(item.x, item.y);
+    if (lastCrash) [lastCrash.x, lastCrash.y] = cell(lastCrash.x, lastCrash.y);
+    turnQueue = turnQueue.map(dir => directions[dir]);
+    for (const pos of playerPosHistory) { [pos.px, pos.py] = point(pos.px, pos.py); pos.dir = directions[pos.dir]; }
+    for (const pos of companionVisuals) { [pos.x, pos.y] = point(pos.x, pos.y); pos.dir = directions[pos.dir]; }
+    for (const p of [...deathParticles, ...collectParticles, ...winParticles]) {
+        [p.x, p.y] = point(p.x, p.y);
+        [p.vx, p.vy] = clockwise ? [-p.vy, p.vx] : [p.vy, -p.vx];
+    }
+    if (typeof rotateFantasyEffects === 'function') rotateFantasyEffects(point, directions);
+    COLS = oldRows; ROWS = oldCols; CANVAS_WIDTH = oldHeight; CANVAS_HEIGHT = oldWidth;
+}
+
 function resizeCanvas() {
-    // Use screen dimensions as fallback (more reliable on iOS)
-    const screenW = document.documentElement.clientWidth || window.innerWidth;
-    const screenH = document.documentElement.clientHeight || window.innerHeight;
-    isMobile = isTouchDevice;
-
-    const isPortrait = screenH > screenW * 1.1; // 10% tolerance
-
-    // Show rotate overlay on touch devices in portrait
-    if (isMobile && isPortrait && [PLAYING, COUNTDOWN, PAUSED, GAME_OVER, WIN].includes(gameState) && rotateOverlay) {
-        rotateOverlay.style.display = 'flex';
-        canvas.style.display = 'none';
-        return;
+    const screenW = window.innerWidth || document.documentElement.clientWidth;
+    const screenH = window.innerHeight || document.documentElement.clientHeight;
+    if ([COUNTDOWN, PLAYING, PAUSED, GAME_OVER, WIN].includes(gameState)
+        && occupiedGrid.length && (screenW > screenH) !== (arenaAspect > 1)) {
+        if (gameState === PLAYING) togglePause();
+        rotateArena(); arenaAspect = screenW / screenH;
     }
     if (rotateOverlay) rotateOverlay.style.display = 'none';
     canvas.style.display = 'block';
-
-    const targetRatio = CANVAS_WIDTH / CANVAS_HEIGHT; // 1.778
-
-    // Always scale to fit while preserving aspect ratio
-    let displayW, displayH;
-    const availW = screenW - (isMobile ? 16 : 40);
-    const availH = screenH - (isMobile ? 120 : 150);
-
-    if (availW / availH > targetRatio) {
-        // Screen is wider than 16:9 — constrain by height
-        displayH = availH;
-        displayW = Math.floor(availH * targetRatio);
-    } else {
-        // Screen is taller/narrower — constrain by width
-        displayW = availW;
-        displayH = Math.floor(availW / targetRatio);
+    canvas.style.width = screenW + 'px';
+    canvas.style.height = screenH + 'px';
+    canvas.style.border = 'none';
+    canvas.style.borderRadius = '0';
+    canvas.style.boxShadow = 'none';
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const pixelWidth = Math.round(screenW * ratio), pixelHeight = Math.round(screenH * ratio);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth; canvas.height = pixelHeight;
     }
-
-    canvas.style.width = displayW + 'px';
-    canvas.style.height = displayH + 'px';
-
-    if (isMobile) {
-        canvas.style.border = 'none';
-        canvas.style.borderRadius = '0';
-        canvas.style.boxShadow = 'none';
-    } else {
-        canvas.style.border = '1px solid rgba(223, 194, 255, 0.22)';
-        canvas.style.borderRadius = '20px';
-        canvas.style.boxShadow = '0 24px 90px rgba(0, 0, 0, 0.35), 0 0 50px rgba(169, 113, 255, 0.08)';
-    }
+    ctx.setTransform(pixelWidth / CANVAS_WIDTH, 0, 0, pixelHeight / CANVAS_HEIGHT, 0, 0);
     if (typeof syncGameUI === 'function') syncGameUI.boundsDirty = true;
 }
 
@@ -1371,7 +1396,9 @@ function checkCollectiblePickup() {
         const dy = Math.abs(c.y - player.y);
         if ((c.x === player.x && c.y === player.y) || (magnetR > 0 && dx <= magnetR && dy <= magnetR)) {
             const poopMult = 1 + (getHatBuff().poopValue || 0);
-            score += c.type.score * scoreMultiplier * poopMult * (1 + getCompanionScoreBonus());
+            const earned = c.type.score * scoreMultiplier * poopMult * (1 + getCompanionScoreBonus());
+            score += earned;
+            if (typeof fantasyEvent === 'function') fantasyEvent('collect', c.x, c.y, `+${Math.round(earned)}`, c.type.color);
             scoreMultiplier = Math.min(MAX_MULTIPLIER, scoreMultiplier + c.type.multiplierBoost);
             runCollectibles++;
             if (practiceActive) practiceProgress.collected = true;
@@ -1437,6 +1464,7 @@ function checkPowerupPickup() {
         const p = powerups[i];
         if (p.x === player.x && p.y === player.y) {
             playSound('powerup');
+            if (typeof fantasyEvent === 'function') fantasyEvent('powerup', p.x, p.y, p.type.label, p.type.color);
             if (p.type.id === 'cleanse') {
                 // Immediately clear trails in a radius around player
                 for (let dx = -CLEANSE_RADIUS; dx <= CLEANSE_RADIUS; dx++) {
@@ -1846,6 +1874,11 @@ function killUnicorn(unicorn, reason = 'Hardened trail', crashX = unicorn.x, cra
     unicorn.alive = false;
     unicorn.deathTime = gameTime;
     if (unicorn.isPlayer) lastCrash = { reason, x: crashX, y: crashY };
+    if (typeof fantasyEvent === 'function') fantasyEvent(unicorn.isPlayer ? 'crash' : 'rival', unicorn.x, unicorn.y, unicorn.isPlayer ? '' : 'Rival down', unicorn.isPlayer ? '#ff9bbd' : '#b5ffe8', {
+        avatar: unicorn.isPlayer ? selectedAvatarId : unicorn.avatarId || 'shadow',
+        accessory: unicorn.isPlayer ? selectedAccessoryId : 'none', dir: unicorn.dir,
+        size: GRID_SIZE * (unicorn.isBoss ? 3.7 : unicorn.isPlayer ? 3 : 2.65), trot: unicorn.trotPhase,
+    });
 
     // Track kills and score for NPC deaths
     if (!unicorn.isPlayer) {
@@ -1883,9 +1916,9 @@ function killUnicorn(unicorn, reason = 'Hardened trail', crashX = unicorn.x, cra
 }
 
 function movementInterval(u) {
-    if (!u.isPlayer) return waveMoveInterval * (u.isBoss ? u.bossType.speed : 1);
+    if (!u.isPlayer) return waveMoveInterval * arenaMoveScale * (u.isBoss ? u.bossType.speed : 1);
     const accessory = getAccessoryBuff(), dog = getDogBuff();
-    let interval = waveMoveInterval * (1 + (accessory.speedResist || 0)) * (1 - (accessory.speedBonus || 0) - (dog.speedBonus || 0));
+    let interval = waveMoveInterval * arenaMoveScale * (1 + (accessory.speedResist || 0)) * (1 - (accessory.speedBonus || 0) - (dog.speedBonus || 0));
     if (activePowerup && activePowerup.type.id === 'speed') interval *= 0.6;
     if (burstActive) interval *= BURST_SPEED_MULT;
     return Math.max(25, interval);
@@ -1985,6 +2018,7 @@ function moveAllUnicorns(movers = unicorns.filter(u => u.alive)) {
 function finishRound(won) {
     if (roundRecorded || practiceActive) return;
     gameState = won ? WIN : GAME_OVER;
+    roundRevealTimer = 0;
     recordRound(won);
     if (won) { playSound('win'); spawnWinParticles(); }
 }
@@ -3263,10 +3297,11 @@ function drawHUD() {
 function drawTouchControls() {
     if (gameState !== PLAYING) return;
 
-    dpadCenterX = 120;
-    dpadCenterY = CANVAS_HEIGHT - 120;
-    const r = DPAD_RADIUS;
-    const btnR = DPAD_BTN_SIZE / 2;
+    const controlScale = CANVAS_WIDTH / window.innerWidth;
+    dpadCenterX = 104 * controlScale;
+    dpadCenterY = CANVAS_HEIGHT - 104 * (CANVAS_HEIGHT / window.innerHeight);
+    const r = dpadRadius = DPAD_RADIUS * controlScale;
+    const btnR = DPAD_BTN_SIZE / 2 * controlScale;
 
     if (showDpad) {
         ctx.beginPath();
@@ -3290,7 +3325,7 @@ function drawTouchControls() {
             ctx.arc(bx, by, btnR, 0, Math.PI * 2);
             ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
             ctx.fill();
-            ctx.font = 'bold 22px sans-serif';
+            ctx.font = `bold ${22 * controlScale}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = `rgba(50, 0, 80, ${alpha + 0.2})`;
@@ -4092,6 +4127,7 @@ function triggerBurst() {
     burstCooldownTimer = BURST_COOLDOWN;
     if (practiceActive) practiceProgress.burst = true;
     playSound('powerup');
+    if (typeof fantasyEvent === 'function') fantasyEvent('burst', player.x, player.y, 'Burst', '#9af3ec');
 }
 
 function triggerSplatter() {
@@ -4111,13 +4147,14 @@ function triggerSplatter() {
             addTrailCell(player, sx, sy, true);
         }
     }
-    playSound('npc_death');
+    if (typeof fantasyEvent === 'function') fantasyEvent('splat', cx, cy, 'Splat!', '#f6b8f9');
+    playSound('splat');
     triggerShake(2, 100);
     // Splatter particles
     const px = cx * GRID_SIZE + GRID_SIZE/2, py = cy * GRID_SIZE + GRID_SIZE/2;
     for (let j = 0; j < 10; j++) {
         const a = (Math.PI * 2 * j) / 10;
-        collectParticles.push({ x: px, y: py, vx: Math.cos(a)*3, vy: Math.sin(a)*3, life: 1, color: '#8B4513', size: 4 });
+        collectParticles.push({ x: px, y: py, vx: Math.cos(a)*3, vy: Math.sin(a)*3, life: 1, color: '#f1b7ee', size: 4 });
     }
 }
 
@@ -4162,6 +4199,8 @@ function finishPractice() {
 }
 
 function startCountdown() {
+    gameState = TITLE; // Configure a fresh board without rotating the previous round.
+    configureArenaViewport();
     initGrid();
     spawnUnicorns();
     survivalTimer = 0;
@@ -4169,14 +4208,19 @@ function startCountdown() {
     deathParticles = [];
     winParticles = [];
     countdownTimer = 0;
+    countdownLoadTimer = 0;
     countdownPhase = -1;
     gameState = COUNTDOWN;
+    if (typeof resetFantasyEffects === 'function') resetFantasyEffects();
     lastTimestamp = performance.now();
     // Boss announcement sound
     if (isBossWave) playSound('boss_hit');
 }
 
 function updateCountdown(delta) {
+    // A cold mobile connection should load the character before the player moves.
+    countdownLoadTimer += delta;
+    if (typeof fantasyAssetsPending === 'function' && fantasyAssetsPending() && countdownLoadTimer < 8000) return;
     countdownTimer += delta;
     const phaseLength = (COUNTDOWN_SECONDS * 1000) / 3;
     const newPhase = Math.min(2, Math.floor(countdownTimer / phaseLength));
@@ -4222,7 +4266,7 @@ function simulateGameStep(delta) {
     const movers = [];
     for (const u of unicorns) {
         if (!u.alive) continue;
-        u.trotPhase += TROT_SPEED * delta;
+        u.trotPhase += TROT_SPEED * delta * (u.isPlayer && burstActive ? 1.45 : 1);
         u.moveElapsed += delta;
         const interval = movementInterval(u);
         if (u.moveElapsed + 0.00001 >= interval) {
@@ -4259,6 +4303,8 @@ function gameLoop(timestamp) {
     const delta = timestamp - lastTimestamp;
     lastTimestamp = timestamp;
     const clampedDelta = Math.min(delta, 100);
+    if (gameState === GAME_OVER || gameState === WIN) roundRevealTimer += clampedDelta;
+    if (typeof updateFantasyPresentation === 'function') updateFantasyPresentation(clampedDelta);
 
     if (typeof syncGameUI === 'function') syncGameUI();
     switch (gameState) {
@@ -4290,6 +4336,7 @@ function gameLoop(timestamp) {
             drawAllUnicorns();
             drawParticles(deathParticles);
             drawParticles(collectParticles);
+            if (typeof drawFantasyEffects === 'function') drawFantasyEffects();
             ctx.restore();
             drawHUD();
             drawActivePowerup();
@@ -4311,6 +4358,9 @@ function gameLoop(timestamp) {
             drawCollectibles();
             drawPowerups();
             drawAllUnicorns();
+            drawParticles(deathParticles);
+            drawParticles(collectParticles);
+            if (typeof drawFantasyEffects === 'function') drawFantasyEffects();
             drawHUD();
             if (typeof syncGameUI !== 'function') drawPauseOverlay();
             break;
@@ -4320,6 +4370,7 @@ function gameLoop(timestamp) {
             drawTrails();
             drawAllUnicorns();
             drawParticles(deathParticles);
+            if (typeof drawFantasyEffects === 'function') drawFantasyEffects();
             drawHUD();
             if (typeof syncGameUI !== 'function') drawGameOverScreen();
             break;
@@ -4330,6 +4381,7 @@ function gameLoop(timestamp) {
             drawAllUnicorns();
             drawHUD();
             if (typeof syncGameUI !== 'function') drawWinScreen();
+            if (typeof drawFantasyEffects === 'function') { drawParticles(winParticles); drawFantasyEffects(); }
             break;
         case RUN_SUMMARY:
             if (typeof syncGameUI !== 'function') drawRunSummaryScreen(clampedDelta);
