@@ -6,6 +6,13 @@ const FANTASY_WORLDS = [
     { name: 'Aurora Springs', subtitle: 'Follow the light. Find your flow.', accent: '#bcd8ff', tint: 'hue-rotate(315deg)', veil: '#0c2030' },
 ];
 const fantasyArt = { lagoon: new Image(), pup: new Image(), gallop: new Image() };
+const rivalArt = {};
+function prepareRivalArt() {
+    for (const u of unicorns) {
+        const style = RIVAL_STYLES.find(s => s.id === u.avatarId);
+        if (style && !rivalArt[style.id]) { const image = new Image(); image.src = style.path; rivalArt[style.id] = image; }
+    }
+}
 let fantasyTime = 0, fantasyEffects = [], fantasyBackground = null, fantasyBackgroundKey = '';
 const fantasyTrailStamps = new Map();
 fantasyArt.lagoon.onload = () => { fantasyBackgroundKey = ''; };
@@ -36,7 +43,8 @@ function rotateFantasyEffects(point, directions) {
 }
 function fantasyReady(img) { return img && img.complete && img.naturalWidth > 0; }
 function fantasyAssetsPending() {
-    return [imgCache.classic, fantasyArt.lagoon, fantasyArt.gallop].some(img => img && !img.complete);
+    const enemies = unicorns.map(u => rivalArt[u.avatarId]).filter(Boolean);
+    return [imgCache.classic, fantasyArt.lagoon, fantasyArt.gallop, ...enemies].some(img => img && !img.complete);
 }
 function fantasyEllipse(g, x, y, rx, ry, color) {
     g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); g.fillStyle = color; g.fill();
@@ -181,18 +189,19 @@ function drawFantasyAccessory(g, id, size) {
     g.restore();
 }
 drawSpriteUnicorn = function (avatarId, accessoryId, x, y, dir, size, trot, g = ctx) {
-    const image = imgCache[avatarId] || imgCache.classic;
+    const rival = RIVAL_STYLES.find(s => s.id === avatarId);
+    const image = rival ? rivalArt[avatarId] : imgCache[avatarId] || imgCache.classic;
     if (!fantasyReady(image)) {
         // Keep the player visible if artwork fails or takes too long to arrive.
         g.save(); g.translate(x, y); g.scale(dir === 'left' || dir === 'up' ? -1 : 1, 1);
-        fantasyEllipse(g, -size * .06, 0, size * .28, size * .17, '#e9e1ef');
+        fantasyEllipse(g, -size * .06, 0, size * .28, size * .17, rival?.body || '#e9e1ef');
         fantasyEllipse(g, size * .19, -size * .2, size * .13, size * .18, '#fff6ee');
         for (const leg of [-.2, -.04, .11]) { g.fillStyle = '#ded6ea'; roundRect(g, size * leg, size * .06, size * .065, size * .23, size * .025); g.fill(); }
-        fantasyEllipse(g, size * .09, -size * .2, size * .07, size * .18, '#ba9de1');
+        fantasyEllipse(g, size * .09, -size * .2, size * .07, size * .18, rival?.mane || '#ba9de1');
         g.beginPath(); g.moveTo(size * .2, -size * .32); g.lineTo(size * .3, -size * .52); g.lineTo(size * .28, -size * .3); g.closePath(); g.fillStyle = '#ffe2a5'; g.fill();
         fantasyEllipse(g, size * .245, -size * .23, size * .022, size * .027, '#57446e'); g.restore(); return;
     }
-    const meta = UNICORN_AVATARS.find(a => a.id === avatarId) || UNICORN_AVATARS[0];
+    const meta = rival || UNICORN_AVATARS.find(a => a.id === avatarId) || UNICORN_AVATARS[0];
     const moving = gameState === PLAYING, runningPose = moving || gameState === PAUSED;
     const phase = runningPose && !reducedMotion ? trot : 0;
     const idlePhase = gameState === CUSTOMIZE ? performance.now() * .002 : fantasyTime * .002;
@@ -208,10 +217,11 @@ drawSpriteUnicorn = function (avatarId, accessoryId, x, y, dir, size, trot, g = 
     const breath = !runningPose && !reducedMotion ? Math.sin(idlePhase) * .014 : 0;
     g.scale(facing * (1 + Math.sin(phase) * .012 - breath), 1 - Math.sin(phase) * .012 + breath);
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.filter = meta.filter;
-    if (runningPose && !reducedMotion && fantasyReady(fantasyArt.gallop)) {
-        const frame = Math.floor(phase / (Math.PI * 2 / 8)) % 8;
-        const sw = fantasyArt.gallop.naturalWidth / 4, sh = fantasyArt.gallop.naturalHeight / 2;
-        g.drawImage(fantasyArt.gallop, (frame % 4) * sw, Math.floor(frame / 4) * sh, sw, sh, -size * .5, -size * .56, size, size);
+    const atlas = rival ? image : fantasyArt.gallop;
+    if ((rival || runningPose && !reducedMotion) && fantasyReady(atlas)) {
+        const frame = runningPose && !reducedMotion ? Math.floor(phase / (Math.PI * 2 / 8)) % 8 : 0;
+        const sw = atlas.naturalWidth / 4, sh = atlas.naturalHeight / 2;
+        g.drawImage(atlas, (frame % 4) * sw, Math.floor(frame / 4) * sh, sw, sh, -size * .5, -size * .56, size, size);
     } else g.drawImage(image, -size * .5, -size * .56, size, size);
     g.filter = 'none'; drawFantasyAccessory(g, accessoryId, size); g.restore();
 };
@@ -220,8 +230,13 @@ drawUnicorn = function (u) {
     const pos = visualPosition(u), size = GRID_SIZE * (u.isBoss ? 3.25 : u.isPlayer ? 2.6 : 2.35);
     if (!isWorldVisible(pos.x, pos.y)) return;
     const avatar = u.isPlayer ? selectedAvatarId : u.avatarId || (u.isBoss ? 'shadow' : 'candy');
+    const rival = RIVAL_STYLES.find(s => s.id === avatar);
     ctx.save();
     fantasyEllipse(ctx, pos.x, pos.y + size * .25, size * .3, size * .12, '#020d2090');
+    if (rival && !u.isBoss) {
+        ctx.strokeStyle = rival.color + 'a0'; ctx.lineWidth = GRID_SIZE * .045;
+        ctx.beginPath(); ctx.ellipse(pos.x, pos.y + size * .25, size * .32, size * .13, 0, 0, Math.PI * 2); ctx.stroke();
+    }
     if (u.isBoss) {
         const color = u.bossType.id === 'charger' ? '#ff9eb5' : '#cfb4ff';
         ctx.strokeStyle = color; ctx.lineWidth = GRID_SIZE * .07;

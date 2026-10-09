@@ -26,8 +26,8 @@ test('re-entering a fresh trail does not refresh its age or permit endless loops
 });
 test('Speed Pup changes player speed without speeding up rivals', () => {
     const e = engine(); e.run("equippedDogId = 'speed_pup'; chooseNPCDirection = npc => npc.dir;");
-    assert.equal(e.run('movementInterval(unicorns[1])'), 165);
-    assert.equal(e.run('movementInterval(player)'), 156.75);
+    assert.equal(e.run('movementInterval(unicorns[1])'), 157.5);
+    assert.equal(e.run('movementInterval(player)'), 149.625);
 });
 test('Burst uses the shared ghost and wide-trail rules', () => {
     const e = engine();
@@ -111,7 +111,7 @@ for (const [width, height] of [[390, 844], [844, 390]]) test(`phone arena fills 
     assert.equal(e.run('Math.min(VIEW_WIDTH, VIEW_HEIGHT) / GRID_SIZE'), 24);
     assert.ok(e.run('CANVAS_WIDTH > VIEW_WIDTH && CANVAS_HEIGHT > VIEW_HEIGHT'));
     assert.ok(Math.abs(e.run('VIEW_WIDTH / VIEW_HEIGHT') - width / height) < .02);
-    assert.equal(e.run('movementInterval(player)'), 220);
+    assert.equal(e.run('movementInterval(player)'), 210);
 });
 test('rotation preserves hazards, trail ages, interpolation, queued turns, and rewards', () => {
     const e = engine({ width: 844, height: 390, touch: true, render: true });
@@ -208,7 +208,9 @@ test('AI forecasts trail hardening and avoids a stationary unicorn head', () => 
 });
 test('wave progression varies in chapters while keeping speed, AI, and crowd sizes bounded', () => {
     const e=engine();
-    assert.equal(e.run('waveConfig(0).npcCount'),e.run('waveConfig(1).npcCount'));
+    assert.equal(e.run('waveConfig(0).npcCount'),2);
+    assert.equal(e.run('waveConfig(1).npcCount'),3);
+    assert.equal(e.run('waveConfig(3).npcCount'),4);
     assert.ok(e.run('waveConfig(5).moveInterval > waveConfig(3).moveInterval'));
     for (let i=0;i<1000;i++) {
         const w=e.run(`waveConfig(${i})`);
@@ -284,4 +286,41 @@ test('rendering the camera world, boss warnings, radar and minimap handles both 
         e.run("selectedGameMode='bossrush'; currentWave=1; startCountdown(); gameState=PLAYING; updateBoss(3800); drawArenaWorld(); drawMinimap(ctx,264,176);");
         assert.ok(e.drawCalls.length>0);
     }
+});
+
+test('every rival in a crowded wave uses a different model from the player and its peers', () => {
+    const e=engine({render:true}); e.run('currentWave=18; startCountdown();');
+    assert.equal(e.run('unicorns.filter(u=>!u.isPlayer).length'),6);
+    assert.equal(e.run('new Set(unicorns.filter(u=>!u.isPlayer).map(u=>u.avatarId)).size'),6);
+    assert.ok(e.run('unicorns.filter(u=>!u.isPlayer).every(u=>RIVAL_STYLES.some(s=>s.id===u.avatarId))'));
+    assert.ok(e.run('RIVAL_STYLES.every(s=>s.path!==UNICORN_AVATARS[0].path)'));
+});
+test('rival loading fetches only the current wave and preserves saved player avatar IDs', () => {
+    const e=engine({render:true});
+    assert.equal(e.run('Object.keys(rivalArt).length'),2);
+    assert.equal(e.run('UNICORN_AVATARS.length'),6);
+    e.run('currentWave=3; startCountdown();'); assert.equal(e.run('Object.keys(rivalArt).length'),4);
+    e.run("applySaveData({rounds:0,avatarId:'candy'});"); assert.equal(e.run('selectedAvatarId'),'candy');
+});
+test('each rival uses its own eight-frame gallop and freezes the atlas pose with reduced motion', () => {
+    const e=engine({render:true});e.run('currentWave=18; startCountdown(); gameState=PLAYING;');
+    for(const id of e.run('RIVAL_STYLES.map(s=>s.id)')) {
+        e.drawCalls.length=0;
+        for(let frame=0;frame<8;frame++) e.run(`drawSpriteUnicorn('${id}','none',100,100,'right',72,${frame*Math.PI/4+.01});`);
+        assert.equal(new Set(e.drawCalls.map(c=>c[1]+','+c[2])).size,8);
+        assert.ok(e.drawCalls.every(c=>c[0]===e.run(`rivalArt['${id}']`) && c.length===9));
+        e.run(`reducedMotion=true;drawSpriteUnicorn('${id}','none',100,100,'right',72,3);`);
+        assert.equal(e.drawCalls.at(-1)[1],0); assert.equal(e.drawCalls.at(-1)[2],0);
+        e.run('reducedMotion=false;');
+    }
+});
+test('missing rival art has a visible fallback and cold enemy loads respect the countdown', () => {
+    const e=engine({render:true});e.run('startCountdown(); rivalArt.rival_sprout.complete=false; updateCountdown(1000);');
+    assert.equal(e.run('countdownTimer'),0);
+    e.run("updateCountdown(7000);drawSpriteUnicorn('rival_sprout','none',100,100,'right',72,0);");
+    assert.equal(e.run('gameState'),'PLAYING');
+});
+test('boss appearances use the armored and celestial enemy models', () => {
+    const e=engine({render:true});e.run("selectedGameMode='bossrush';currentWave=0;startCountdown();"); assert.equal(e.run('boss.avatarId'),'rival_ember');
+    e.run('currentWave=1;startCountdown();');assert.equal(e.run('boss.avatarId'),'rival_luna');
 });

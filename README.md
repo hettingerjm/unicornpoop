@@ -44,7 +44,7 @@ On touchscreens, swipe to steer and tap the ability buttons. An optional D-pad i
 
 ## Modes
 
-- **Classic:** progressive waves.
+- **Classic:** endless progressive waves, with a boss every fifth wave. Your separate XP profile level tops out at 50.
 - **Chill:** slower movement.
 - **Speed:** faster movement.
 - **Boss Rush:** a boss every wave.
@@ -52,7 +52,9 @@ On touchscreens, swipe to steer and tap the ability buttons. An optional D-pad i
 
 ## Difficulty and bosses
 
-Early waves raise one main challenge at a time: two rivals in waves 1–2, then three in waves 3–4. Five-wave chapters build toward a boss and ease the movement pace afterward. Classic movement interval decreases from 110ms toward a floor of 86ms before device and mode scaling; rival count caps at six, lookahead at eight, and mistakes at a nonzero floor. Later chapters vary rival personalities. Rivals forecast fresh poop hardening along a path and avoid stepping into a stationary head. Starting rivals no longer spawn on a direct collision course with the player.
+Early waves start with two rivals in wave 1, three in waves 2–3, and four in wave 4. Movement is about 5–8% faster in the opening chapter than the previous release. Five-wave chapters build toward a boss and ease the movement pace afterward. Classic movement interval decreases from 105ms toward a floor of 86ms before device and mode scaling; rival count caps at six, lookahead at eight, and mistakes at a nonzero floor. Later chapters vary rival personalities and introduce new combinations of character designs. Rivals forecast fresh poop hardening along a path and avoid stepping into a stationary head. Starting rivals no longer spawn on a direct collision course with the player.
+
+Six enemy models each have their own eight-frame gallop: Sprout (shaggy woodland), Frost (ice crystal), Ember (armored fire), Luna (celestial), Bubble (candy cloud), and Clockwork (brass robot). A wave never duplicates an enemy model. Charger uses Ember's armored model and Phantom uses Luna's celestial model, with their existing larger size, boss labels, and attack cues. Player avatar IDs and saved customization remain compatible.
 
 Every fifth Classic/Chill/Speed wave is a boss encounter. Boss Rush alternates Charger and Phantom every wave. Health rises from two to six rather than eventually requiring twelve hits. Bosses pursue the player, display a warning for 1.2 seconds, commit to an attack, then offer a 1.8-second recovery window. Larger bosses accelerate their cycles below half health without shortening the warning.
 
@@ -78,7 +80,7 @@ style.css              Responsive menus, arena controls, and visual design
 game.js                Simulation, collisions, input, and save data; fallback presentation
 render.js              Fantasy artwork, gallop animation, cached materials, effects, and audio
 ui.js                  Native menus, practice guide, live HUD, and save transfer
-assets/fantasy/        Generated character atlas, companion, arena art, and art direction notes
+assets/fantasy/        Player and six enemy atlases, companion, arena art, and generation notes
 assets/                Original unicorn and accessory artwork
 tests/game.test.cjs    Engine and presentation regression checks
 tests/harness.cjs      Seeded browser/audio mock around the real engine
@@ -87,7 +89,7 @@ tests/balance.cjs      400-run deterministic pacing stress check
 
 The engine uses a fixed simulation clock and independent movement timers for each unicorn. Visual interpolation smooths movement without changing the collision grid. Pausing freezes trail aging; speed perks affect only the player. Burst shares ordinary movement's collision and perk rules. The world is 66×44 cells in landscape and 44×66 in portrait on every device. The camera shows 24 cells on a phone's short side and 30 on desktop, with intervals scaled for cell size. Characters are slightly smaller within that view, preserving readability while making room for movement. Camera interpolation uses elapsed time, stays inside the world, freezes on pause, and follows bursts. Rotation preserves hazards, hearts, queued turns, boss warnings, and teleport destinations. The canvas uses the full viewport and caps its backing resolution at 2× device pixels.
 
-The fantasy presentation uses transparent 3D-rendered sprites on a 2D canvas, an eight-frame gallop, idle breathing, turn lean, pickup hops, dash echoes, companion bounce, sculpted trail materials, and soft bell sounds. Three world palettes change every three waves. Offscreen trails and characters are culled. Arena textures and trail stamps are cached; transient effects are capped at 40. Reduced motion disables decorative animation and gives immediate results. Read the [art direction and generation prompts](assets/fantasy/README.md).
+The fantasy presentation uses transparent 3D-rendered sprites on a 2D canvas, separate eight-frame gallops for the player and six enemy designs, idle breathing, turn lean, pickup hops, dash echoes, companion bounce, sculpted trail materials, and soft bell sounds. Enemy atlases load only when needed for the current wave and remain cached; opening the help roster displays all six portraits. A failed image retains a visible colored fallback character. Three world palettes change every three waves. Offscreen trails and characters are culled. Arena textures and trail stamps are cached; transient effects are capped at 40. Reduced motion disables decorative animation and gives immediate results. Read the [art direction and generation prompts](assets/fantasy/README.md).
 
 ## Development checks
 
@@ -97,6 +99,6 @@ Optional: with Node.js installed, run:
 node --test tests/game.test.cjs
 ```
 
-The 49 tests exercise the actual engine and fantasy renderer with browser drawing/audio mocked: refresh-rate-independent scoring, paused trail aging, loop prevention, buffered turns, head collisions, burst/ghost interactions, crash saves, bosses, Score Attack, practice, save migration, larger mobile worlds, bounded camera motion, timed wave objectives, heart lives and rescue windows, AI trail-hardening predictions, boss attack warnings, safe Phantom landings, damage cooldowns, Splat damage, reversible live rotation, immediate swipe steering, finger-sized D-pad geometry, atlas cropping, reduced motion, bounded effect caches, and artwork loading recovery.
+The 54 tests exercise the actual engine and fantasy renderer with browser drawing/audio mocked: refresh-rate-independent scoring, paused trail aging, loop prevention, buffered turns, head collisions, burst/ghost interactions, crash saves, bosses, Score Attack, practice, save migration, larger mobile worlds, bounded camera motion, timed wave objectives, heart lives and rescue windows, AI trail-hardening predictions, boss attack warnings, safe Phantom landings, damage cooldowns, Splat damage, reversible live rotation, immediate swipe steering, finger-sized D-pad geometry, distinct enemy models, lazy atlas loading, boss artwork, atlas cropping, reduced motion, bounded effect caches, and artwork loading recovery.
 
 Static assets have a version query in `index.html`; bump it when shipping changes so browsers fetch a consistent set of scripts and styles.

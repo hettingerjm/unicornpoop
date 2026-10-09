@@ -46,6 +46,17 @@ const UNICORN_AVATARS = [
     { id: 'shadow',  label: 'Eclipse', path: 'assets/fantasy/unicorn-pearl.png', filter: 'brightness(0.63) saturate(1.3) hue-rotate(20deg)' },
 ];
 
+// Enemy art uses separate models and animation atlases, independent of saved
+// player avatar IDs. Their silhouettes stay recognizable without color filters.
+const RIVAL_STYLES = [
+    { id: 'rival_sprout', label: 'Sprout', path: 'assets/fantasy/rival-sprout.png', color: '#98c36b', body: '#e9d3b0', mane: '#6e9342', filter: 'none' },
+    { id: 'rival_frost', label: 'Frost', path: 'assets/fantasy/rival-frost.png', color: '#8be4ff', body: '#b9eaff', mane: '#31b4ed', filter: 'none' },
+    { id: 'rival_ember', label: 'Ember', path: 'assets/fantasy/rival-ember.png', color: '#ffaf66', body: '#a75032', mane: '#f16a32', filter: 'none' },
+    { id: 'rival_luna', label: 'Luna', path: 'assets/fantasy/rival-luna.png', color: '#b6bfff', body: '#555385', mane: '#b8c4ee', filter: 'none' },
+    { id: 'rival_bubble', label: 'Bubble', path: 'assets/fantasy/rival-bubble.png', color: '#ffc7e3', body: '#f3c7df', mane: '#f284bd', filter: 'none' },
+    { id: 'rival_clockwork', label: 'Clockwork', path: 'assets/fantasy/rival-clockwork.png', color: '#ecd08c', body: '#b99659', mane: '#63d3d5', filter: 'none' },
+];
+
 // Accessory anchor types: 'head_top', 'eyes', 'head_float', 'head_wrap', 'back_top', 'back'
 const ACCESSORIES = [
     { id: 'none',               label: 'None',             path: null,                                  anchor: 'none' },
@@ -164,8 +175,8 @@ function waveConfig(wave) {
     // A new chapter eases the pace after its boss. Later waves add tactical
     // pressure without accelerating beyond a readable, bounded speed.
     return {
-        npcCount: Math.min(6, [2, 2, 3, 3, 3][stage] + Math.floor(chapter / 2)),
-        moveInterval: Math.max(86, [110, 106, 103, 100, 106][stage] - chapter * 3),
+        npcCount: Math.min(6, [2, 3, 3, 4, 4][stage] + Math.floor((chapter + 1) / 2)),
+        moveInterval: Math.max(86, [105, 101, 97, 93, 99][stage] - chapter * 3),
         lookahead: Math.min(8, 4 + Math.floor(stage / 2) + Math.floor(chapter / 2)),
         mistakeChance: Math.max(.018, .06 - stage * .006 - chapter * .005),
         surviveMs: stage === 4 ? 0 : Math.min(55000, [35000, 40000, 45000, 45000][stage] + chapter * 5000),
@@ -1029,7 +1040,7 @@ function spawnUnicorns() {
             const sp = spawnPoints[i];
             const hueStart = (i + 1) * 70;
             const npc = createUnicorn(`npc${i}`, sp.x, sp.y, sp.dir, false, hueStart, NPC_THEMES[i % NPC_THEMES.length]);
-            npc.avatarId = ['candy', 'ice', 'neon', 'royal', 'shadow', 'candy'][i];
+            npc.avatarId = RIVAL_STYLES[(i + Math.floor(currentWave / 5) * 2) % RIVAL_STYLES.length].id;
             npc.personality = currentWave < 2 ? NPC_PERSONALITIES[i % 2 ? 2 : 0] : NPC_PERSONALITIES[(i + Math.floor(currentWave / 5)) % 4];
             unicorns.push(npc);
         }
@@ -1040,6 +1051,7 @@ function spawnUnicorns() {
     const firstX = px + (practiceActive ? 7 : 5);
     collectibles = collectibles.filter(c => c.x !== firstX || c.y !== py);
     collectibles.unshift({ x: firstX, y: py, type: COLLECTIBLE_TYPES[practiceActive ? 0 : 2], spawnTime: gameTime });
+    if (typeof prepareRivalArt === 'function') prepareRivalArt();
     resetCamera();
 }
 
@@ -1650,7 +1662,7 @@ function spawnBoss() {
     boss = createUnicorn('boss', spawnX, spawnY, 'left', false, 0, theme);
     boss.isBoss = true;
     boss.bossType = bt;
-    boss.avatarId = bt.id === 'charger' ? 'candy' : 'shadow';
+    boss.avatarId = bt.id === 'charger' ? 'rival_ember' : 'rival_luna';
     boss.personality = { aggressiveness: .45, mistakeMod: .3, lookaheadMod: 1.2 };
     // Boss number (1st boss, 2nd boss, etc.) — scales health from easy to hard
     const scaledHealth = Math.min(6, bt.baseHealth + Math.floor(encounter / 2));
