@@ -324,6 +324,23 @@ const fallbackActivePowerup = drawActivePowerup, fallbackBossBar = drawBossHealt
 drawActivePowerup = function () { if (typeof syncGameUI !== 'function') fallbackActivePowerup(); };
 drawBossHealthBar = function () { if (typeof syncGameUI !== 'function') fallbackBossBar(); };
 
+function drawFantasyNotice(text, timer, slot = 0) {
+    if (gameState !== PLAYING || survivalTimer < 1000 || practiceActive) return;
+    const width = Math.min(CANVAS_WIDTH - GRID_SIZE * 2, GRID_SIZE * 17), height = GRID_SIZE * 1.35;
+    const x = (CANVAS_WIDTH - width) / 2, y = CANVAS_HEIGHT - GRID_SIZE * (7 + slot * 1.6);
+    ctx.save(); ctx.globalAlpha = Math.min(1, timer / 350);
+    roundRect(ctx, x, y, width, height, GRID_SIZE * .4); ctx.fillStyle = '#0b213be8'; ctx.fill();
+    ctx.strokeStyle = '#c6f0df50'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.font = `600 ${GRID_SIZE * .62}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#e7f1d9';
+    ctx.fillText('✦  ' + text, CANVAS_WIDTH / 2, y + height / 2, width - GRID_SIZE); ctx.restore();
+}
+drawUnlockPopup = function () {
+    if (unlockPopup) drawFantasyNotice(unlockPopup.text.replace(/^\S+\s/, ''), unlockPopup.timer);
+};
+drawAchievementPopup = function () {
+    if (achievementPopup) drawFantasyNotice(achievementPopup.achievement.label + ' unlocked', achievementPopup.timer, unlockPopup ? 1 : 0);
+};
+
 // Soft bell harmonics and short filtered sweeps replace harsh retro oscillators.
 playSound = function (type) {
     if (!soundEnabled || !audioCtx) return;
